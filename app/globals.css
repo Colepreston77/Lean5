@@ -1,26 +1,60 @@
 @import "tailwindcss";
 
+/* LEAN 5 design system — clean light theme, Fitness Culture style.
+   White cards on a light-grey background, bold names, large tap targets. */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #f3f4f6; /* app background (grey-100) */
+  --card: #ffffff;
+  --ink: #111827; /* near-black text (grey-900) */
+  --ink-soft: #6b7280; /* grey-500 */
+  --ink-faint: #9ca3af; /* grey-400 */
+  --line: #e5e7eb; /* grey-200 */
+  --accent: #111827;
+  --green: #16a34a;
+  --green-bg: #dcfce7;
+  --yellow: #ca8a04;
+  --yellow-bg: #fef9c3;
+  --blue: #2563eb;
+  --blue-bg: #dbeafe;
+  --neutral-bg: #f3f4f6;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-bg: var(--bg);
+  --color-card: var(--card);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-line: var(--line);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: light;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+/* Remove number-input spinners — we use steppers. */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Safe-area padding for the bottom nav on iPhone. */
+.pb-safe {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 0.5rem);
 }
