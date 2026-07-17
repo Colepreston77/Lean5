@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { buildGenerationPrompt } from "@/lib/ai/prompt";
+import { buildGenerationPrompt, SYSTEM_PROMPT } from "@/lib/ai/prompt";
 import { validateGeneratedProgram } from "@/lib/ai/contract";
 import type { Program } from "@/lib/engine/types";
 
@@ -62,6 +62,7 @@ async function callOpenAI(prompt: string): Promise<string> {
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
     body: JSON.stringify({
       model,
+      instructions: SYSTEM_PROMPT, // system-level grounding for the review engine
       input: prompt,
       ...(webSearch ? { tools: [{ type: "web_search" }] } : {}),
     }),
