@@ -24,7 +24,7 @@ export default function Stepper({
     onChange(next);
   }
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex w-full items-center gap-1.5">
       <button
         aria-label={`decrease ${ariaLabel ?? ""}`}
         onClick={() => bump(-step)}
@@ -32,7 +32,7 @@ export default function Stepper({
       >
         −
       </button>
-      <div className="relative w-20">
+      <div className="relative min-w-0 flex-1">
         <input
           aria-label={ariaLabel}
           inputMode="decimal"

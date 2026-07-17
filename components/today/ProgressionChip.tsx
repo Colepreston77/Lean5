@@ -10,7 +10,7 @@ const STYLES: Record<HintColor, string> = {
 
 export default function ProgressionChip({ hint }: { hint: ProgressionHint }) {
   return (
-    <span className={`inline-block rounded-full px-2.5 py-1 text-xs font-semibold ${STYLES[hint.color]}`}>
+    <span className={`inline-block max-w-full whitespace-normal break-words rounded-full px-2.5 py-1 text-xs font-semibold ${STYLES[hint.color]}`}>
       {hint.text}
     </span>
   );

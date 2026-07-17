@@ -39,7 +39,7 @@ export default function ExerciseCard({
   return (
     <div className="overflow-hidden rounded-2xl bg-card shadow-sm">
       <button onClick={() => setOpen((o) => !o)} className="flex w-full items-start gap-3 p-4 text-left">
-        <div className="flex-1">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-base font-bold leading-tight">{slot.exercise.name}</span>
             {slot.is_substituted && (
