@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { LEAN5_PROGRAM } from "@/lib/seed/program";
 import { ALL_EXERCISES, getExercise } from "@/lib/seed/exercises";
 import { schedulePosition } from "@/lib/engine/sequence";
@@ -18,7 +19,29 @@ import type { LocalSet } from "@/components/today/SetRow";
 
 type State = "loading" | "ready" | "error" | "meso_complete";
 
+/** Where in the block we're viewing + how to move around it. */
+interface Nav {
+  week: number;
+  day: number;
+  weekCount: number;
+  daysPerWeek: number;
+  /** true when this is the sequence's default landing (not a manual pick). */
+  isSequenceDay: boolean;
+}
+
 export default function TodayPage() {
+  return (
+    <Suspense fallback={<div className="flex flex-1 items-center justify-center pt-24 text-ink-soft">Loading…</div>}>
+      <TodayInner />
+    </Suspense>
+  );
+}
+
+function TodayInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const sp = searchParams.toString();
+
   const [state, setState] = useState<State>("loading");
   const [errMsg, setErrMsg] = useState("");
   const [model, setModel] = useState<DayView | null>(null);
@@ -26,12 +49,20 @@ export default function TodayPage() {
   const [swapSlot, setSwapSlot] = useState<string | null>(null);
   const [swapCounts, setSwapCounts] = useState<Record<string, number>>({});
   const [summary, setSummary] = useState<SessionSummary | null>(null);
+  const [nav, setNav] = useState<Nav | null>(null);
 
   const mesoRef = useRef<repo.MesocycleRow | null>(null);
   const sessionRef = useRef<repo.SessionRow | null>(null);
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
-  const load = useCallback(async () => {
+  function goTo(week: number, day: number) {
+    router.replace(`/today?week=${week}&day=${day}`);
+  }
+  function goToday() {
+    router.replace(`/today`);
+  }
+
+  const load = useCallback(async (target?: { week: number; day: number }) => {
     try {
       setState("loading");
       if (!hasSupabaseConfig()) {
@@ -41,13 +72,25 @@ export default function TodayPage() {
       const meso = await repo.getOrCreateActiveMesocycle(LEAN5_PROGRAM.name);
       mesoRef.current = meso;
       const program = meso.program_json ?? LEAN5_PROGRAM;
+      const daysPerWeek = program.days_per_week;
 
-      const completed = await repo.getCompletedCount(meso.id);
-      const pos = schedulePosition(completed, program.days_per_week, meso.week_count);
-      if (pos.mesocycleComplete) return setState("meso_complete");
+      let week: number;
+      let dayOrder: number;
+      let isSequenceDay = false;
+      if (target) {
+        // Manually chosen day (from Calendar or prev/next). Clamp to valid range.
+        week = Math.min(Math.max(1, target.week), meso.week_count);
+        dayOrder = Math.min(Math.max(1, target.day), daysPerWeek);
+      } else {
+        const completed = await repo.getCompletedCount(meso.id);
+        const pos = schedulePosition(completed, daysPerWeek, meso.week_count);
+        if (pos.mesocycleComplete) return setState("meso_complete");
+        week = pos.currentWeek;
+        dayOrder = pos.nextDayOrder;
+        isSequenceDay = true;
+      }
+      setNav({ week, day: dayOrder, weekCount: meso.week_count, daysPerWeek, isSequenceDay });
 
-      const week = pos.currentWeek;
-      const dayOrder = pos.nextDayOrder;
       const isDeload = isDeloadWeek(week, meso.week_count);
       const day = program.days[dayOrder - 1];
 
@@ -96,8 +139,12 @@ export default function TodayPage() {
   }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    const w = Number(searchParams.get("week"));
+    const d = Number(searchParams.get("day"));
+    const hasTarget = Number.isFinite(w) && Number.isFinite(d) && w > 0 && d > 0;
+    load(hasTarget ? { week: w, day: d } : undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sp, load]);
 
   function persist(slotId: string, exerciseId: string, i: number, s: LocalSet, done: boolean) {
     const session = sessionRef.current;
@@ -159,10 +206,23 @@ export default function TodayPage() {
       });
       setSwapCounts((c) => ({ ...c, [slotId]: (c[slotId] ?? 0) + 1 }));
       setSwapSlot(null);
-      await load();
+      await reloadCurrent();
     } catch (e) {
       console.error(e);
     }
+  }
+
+  /** Reload the day currently being viewed (sequence default or the manual pick). */
+  function reloadCurrent() {
+    return load(nav && !nav.isSequenceDay ? { week: nav.week, day: nav.day } : undefined);
+  }
+
+  /** Step forward/back through the block's days (across weeks). */
+  function move(delta: number) {
+    if (!nav) return;
+    const idx = (nav.week - 1) * nav.daysPerWeek + (nav.day - 1) + delta;
+    if (idx < 0 || idx >= nav.weekCount * nav.daysPerWeek) return;
+    goTo(Math.floor(idx / nav.daysPerWeek) + 1, (idx % nav.daysPerWeek) + 1);
   }
 
   async function finish() {
@@ -218,7 +278,7 @@ export default function TodayPage() {
       <CenterMsg>
         <div className="mb-2 font-bold">Couldn&apos;t load</div>
         <div className="max-w-xs text-sm text-ink-soft">{errMsg}</div>
-        <button onClick={load} className="mt-4 rounded-xl bg-ink px-5 py-2.5 font-semibold text-white">
+        <button onClick={() => load()} className="mt-4 rounded-xl bg-ink px-5 py-2.5 font-semibold text-white">
           Retry
         </button>
       </CenterMsg>
@@ -241,7 +301,7 @@ export default function TodayPage() {
 
   return (
     <div className="mx-auto max-w-lg px-4 pt-4">
-      <Header model={model} />
+      <Header model={model} nav={nav} onMove={move} onToday={goToday} />
 
       <div className="mt-4 rounded-2xl bg-card p-4 shadow-sm">
         <div className="text-sm font-bold uppercase tracking-wide text-ink-faint">Warm-up</div>
@@ -298,7 +358,7 @@ export default function TodayPage() {
           dayName={model.name}
           onDone={() => {
             setSummary(null);
-            load();
+            reloadCurrent();
           }}
         />
       )}
@@ -306,8 +366,23 @@ export default function TodayPage() {
   );
 }
 
-function Header({ model }: { model: DayView }) {
+function Header({
+  model,
+  nav,
+  onMove,
+  onToday,
+}: {
+  model: DayView;
+  nav: Nav | null;
+  onMove: (delta: number) => void;
+  onToday: () => void;
+}) {
   const today = new Date().toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+  const idx = nav ? (nav.week - 1) * nav.daysPerWeek + (nav.day - 1) : 0;
+  const total = nav ? nav.weekCount * nav.daysPerWeek : 0;
+  const atStart = idx <= 0;
+  const atEnd = idx >= total - 1;
+
   return (
     <header>
       <div className="flex items-center justify-between">
@@ -316,18 +391,48 @@ function Header({ model }: { model: DayView }) {
           {model.isDeload ? (
             <Badge className="bg-[var(--blue-bg)] text-[var(--blue)]">DELOAD WEEK</Badge>
           ) : (
-            <Badge className="bg-[var(--neutral-bg)] text-ink-soft">
-              Week {model.week} of 4
-            </Badge>
+            <Badge className="bg-[var(--neutral-bg)] text-ink-soft">Week {model.week} of {nav?.weekCount ?? 4}</Badge>
           )}
           {model.cutMode && !model.isDeload && <Badge className="bg-[var(--yellow-bg)] text-[var(--yellow)]">CUT</Badge>}
         </div>
       </div>
-      <h1 className="mt-1 text-2xl font-black leading-tight">{model.name}</h1>
+
+      {/* Day navigator — flip through the block's days regardless of calendar date */}
+      <div className="mt-2 flex items-center gap-2">
+        <NavArrow dir="prev" disabled={atStart} onClick={() => onMove(-1)} />
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-2xl font-black leading-tight">{model.name}</h1>
+          <div className="flex items-center gap-2 text-xs text-ink-faint">
+            <span>Day {nav?.day} · Week {nav?.week}</span>
+            {nav && !nav.isSequenceDay && (
+              <button onClick={onToday} className="rounded-full bg-[var(--neutral-bg)] px-2 py-0.5 font-semibold text-ink-soft">
+                ↻ Jump to current
+              </button>
+            )}
+          </div>
+        </div>
+        <NavArrow dir="next" disabled={atEnd} onClick={() => onMove(1)} />
+      </div>
+
       {model.cutMode && !model.isDeload && (
         <p className="mt-1 text-xs text-ink-faint">Cut mode on — last exercise trimmed one set.</p>
       )}
     </header>
+  );
+}
+
+function NavArrow({ dir, disabled, onClick }: { dir: "prev" | "next"; disabled: boolean; onClick: () => void }) {
+  return (
+    <button
+      aria-label={dir === "prev" ? "previous day" : "next day"}
+      onClick={onClick}
+      disabled={disabled}
+      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-card shadow-sm active:scale-90 disabled:opacity-30"
+    >
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        {dir === "prev" ? <path d="M15 18l-6-6 6-6" /> : <path d="M9 18l6-6-6-6" />}
+      </svg>
+    </button>
   );
 }
 

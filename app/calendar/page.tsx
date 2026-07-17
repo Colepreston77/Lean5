@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { LEAN5_PROGRAM } from "@/lib/seed/program";
-import { getExercise } from "@/lib/seed/exercises";
 import { schedulePosition } from "@/lib/engine/sequence";
 import { isDeloadWeek } from "@/lib/engine/deload";
 import { hasSupabaseConfig } from "@/lib/supabase/client";
@@ -17,12 +17,16 @@ interface DayCell {
 }
 
 export default function CalendarPage() {
+  const router = useRouter();
   const [cells, setCells] = useState<DayCell[]>([]);
   const [weekCount, setWeekCount] = useState(4);
-  const [program, setProgram] = useState<Program>(LEAN5_PROGRAM);
-  const [preview, setPreview] = useState<{ week: number; dayOrder: number } | null>(null);
+  const [, setProgram] = useState<Program>(LEAN5_PROGRAM);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+
+  function openDay(week: number, dayOrder: number) {
+    router.push(`/today?week=${week}&day=${dayOrder}`);
+  }
 
   useEffect(() => {
     (async () => {
@@ -70,7 +74,7 @@ export default function CalendarPage() {
     <div className="mx-auto max-w-lg px-4 pt-4">
       <h1 className="text-2xl font-black">Calendar</h1>
       <p className="mb-4 text-sm text-ink-faint">
-        Workouts run in sequence — the actual day doesn&apos;t matter. Skip a day and the next gym day picks up where you left off.
+        Workouts run in sequence — the actual day doesn&apos;t matter. Tap any day to open and log it.
       </p>
 
       {byWeek.map((week, i) => {
@@ -85,7 +89,7 @@ export default function CalendarPage() {
               {week.map((c) => (
                 <button
                   key={`${c.week}-${c.dayOrder}`}
-                  onClick={() => setPreview({ week: c.week, dayOrder: c.dayOrder })}
+                  onClick={() => openDay(c.week, c.dayOrder)}
                   className={`flex items-center justify-between rounded-2xl border p-3 text-left ${
                     c.status === "current"
                       ? "border-ink bg-card shadow-sm"
@@ -110,8 +114,6 @@ export default function CalendarPage() {
           </section>
         );
       })}
-
-      {preview && <DayPreview program={program} week={preview.week} dayOrder={preview.dayOrder} onClose={() => setPreview(null)} />}
     </div>
   );
 }
@@ -124,36 +126,6 @@ function StatusDot({ status }: { status: DayCell["status"] }) {
       ? "bg-ink"
       : "bg-line";
   return <span className={`h-2.5 w-2.5 rounded-full ${cls}`} />;
-}
-
-function DayPreview({ program, week, dayOrder, onClose }: { program: Program; week: number; dayOrder: number; onClose: () => void }) {
-  const day = program.days[dayOrder - 1];
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40" onClick={onClose}>
-      <div className="max-h-[80vh] overflow-y-auto rounded-t-3xl bg-card p-5 pb-safe" onClick={(e) => e.stopPropagation()}>
-        <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-line" />
-        <div className="text-xs font-bold uppercase tracking-wide text-ink-faint">Week {week} · preview</div>
-        <h2 className="mb-3 text-xl font-black">{day.name}</h2>
-        <ul className="flex flex-col gap-2">
-          {day.slots.map((s) => {
-            const ex = getExercise(s.exercise_id)!;
-            return (
-              <li key={s.slot_id} className="flex items-center justify-between border-b border-line pb-2">
-                <div>
-                  <div className="font-semibold">{ex.name}</div>
-                  <div className="text-xs text-ink-faint">RIR {s.rir_target}</div>
-                </div>
-                <div className="text-sm font-medium text-ink-soft">
-                  {s.sets} × {s.reps_label ?? `${s.reps_low}-${s.reps_high}`}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-        <button onClick={onClose} className="mt-4 w-full rounded-xl bg-[var(--neutral-bg)] py-3 font-semibold">Close</button>
-      </div>
-    </div>
-  );
 }
 
 function Center({ children }: { children: React.ReactNode }) {
