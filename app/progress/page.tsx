@@ -11,6 +11,7 @@ import * as repo from "@/lib/db/repo";
 
 export default function ProgressPage() {
   const [history, setHistory] = useState<repo.HistoryLog[]>([]);
+  const [program, setProgram] = useState(LEAN5_PROGRAM);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -18,6 +19,7 @@ export default function ProgressPage() {
       try {
         if (!hasSupabaseConfig()) return;
         const meso = await repo.getOrCreateActiveMesocycle(LEAN5_PROGRAM.name);
+        setProgram(meso.program_json ?? LEAN5_PROGRAM);
         setHistory(await repo.getMesocycleHistory(meso.id));
       } catch (e) {
         console.error(e);
@@ -27,13 +29,13 @@ export default function ProgressPage() {
     })();
   }, []);
 
-  // Planned weekly volume (fractional) from the program.
+  // Planned weekly volume (fractional) from the active program.
   const volume = useMemo(() => {
-    const slots: VolumeSlot[] = LEAN5_PROGRAM.days.flatMap((d) =>
+    const slots: VolumeSlot[] = program.days.flatMap((d) =>
       d.slots.map((s) => ({ sets: s.sets, exercise: EXERCISES[s.exercise_id] }))
     );
     return weeklyVolume(slots);
-  }, []);
+  }, [program]);
 
   // e1RM series per exercise from logged history (grouped by day).
   const series = useMemo(() => {

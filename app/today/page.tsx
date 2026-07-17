@@ -40,15 +40,16 @@ export default function TodayPage() {
       }
       const meso = await repo.getOrCreateActiveMesocycle(LEAN5_PROGRAM.name);
       mesoRef.current = meso;
+      const program = meso.program_json ?? LEAN5_PROGRAM;
 
       const completed = await repo.getCompletedCount(meso.id);
-      const pos = schedulePosition(completed, LEAN5_PROGRAM.days_per_week, meso.week_count);
+      const pos = schedulePosition(completed, program.days_per_week, meso.week_count);
       if (pos.mesocycleComplete) return setState("meso_complete");
 
       const week = pos.currentWeek;
       const dayOrder = pos.nextDayOrder;
       const isDeload = isDeloadWeek(week, meso.week_count);
-      const day = LEAN5_PROGRAM.days[dayOrder - 1];
+      const day = program.days[dayOrder - 1];
 
       const swapRows = await repo.getSwaps(meso.id);
       const swaps: Record<string, string> = {};
@@ -201,7 +202,8 @@ export default function TodayPage() {
     await repo.completeSession(session.id, durationSeconds);
 
     const newCompleted = (await repo.getCompletedCount(meso.id));
-    const pos = schedulePosition(newCompleted, LEAN5_PROGRAM.days_per_week, meso.week_count);
+    const program = meso.program_json ?? LEAN5_PROGRAM;
+    const pos = schedulePosition(newCompleted, program.days_per_week, meso.week_count);
     await repo.setMesocycleWeek(meso.id, pos.currentWeek);
     if (pos.mesocycleComplete) await repo.completeMesocycle(meso.id);
 

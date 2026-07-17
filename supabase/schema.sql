@@ -26,8 +26,15 @@ create table if not exists mesocycles (
   week_count    int  not null default 4,
   current_week  int  not null default 1,
   status        text not null default 'active',  -- active | completed
+  -- Full program JSON for this block. NULL = use the built-in Lean 5 default.
+  -- Populated when a block is generated (AI review) or imported.
+  program_json  jsonb,
+  goal          text,
   created_at    timestamptz not null default now()
 );
+-- Migration for existing installs (safe to re-run):
+alter table mesocycles add column if not exists program_json jsonb;
+alter table mesocycles add column if not exists goal text;
 
 -- Sessions --------------------------------------------------------------------
 create table if not exists sessions (

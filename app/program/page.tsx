@@ -8,11 +8,13 @@ import { auditWeek, type WeekPlan, type AuditDay, type AuditSlot, type AuditResu
 import { schedulePosition } from "@/lib/engine/sequence";
 import { hasSupabaseConfig } from "@/lib/supabase/client";
 import * as repo from "@/lib/db/repo";
+import type { Program } from "@/lib/engine/types";
+import NextBlock from "@/components/program/NextBlock";
 
 // Build an audit WeekPlan for a given week (cold-start style: null targets ok).
-function buildPlan(week: number, weekCount: number): WeekPlan {
+function buildPlan(program: Program, week: number, weekCount: number): WeekPlan {
   const isDeload = isDeloadWeek(week, weekCount);
-  const days: AuditDay[] = LEAN5_PROGRAM.days.map((day) => {
+  const days: AuditDay[] = program.days.map((day) => {
     const slots: AuditSlot[] = day.slots.map((slot) => {
       const ex = getExercise(slot.exercise_id)!;
       const sets = ex.primary_muscle === "cardio"
@@ -45,15 +47,21 @@ export default function ProgramPage() {
   const [audit, setAudit] = useState<AuditResult | null>(null);
   const [openDay, setOpenDay] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [program, setProgram] = useState<Program>(LEAN5_PROGRAM);
+  const [mesoId, setMesoId] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     (async () => {
       if (!hasSupabaseConfig()) return;
       try {
         const meso = await repo.getOrCreateActiveMesocycle(LEAN5_PROGRAM.name);
+        const prog = meso.program_json ?? LEAN5_PROGRAM;
+        setProgram(prog);
+        setMesoId(meso.id);
         setWeekCount(meso.week_count);
         const completed = await repo.getCompletedCount(meso.id);
-        const pos = schedulePosition(completed, LEAN5_PROGRAM.days_per_week, meso.week_count);
+        const pos = schedulePosition(completed, prog.days_per_week, meso.week_count);
         setWeek(pos.currentWeek);
         setComplete(pos.mesocycleComplete);
         const s = await repo.getSettings();
@@ -62,12 +70,12 @@ export default function ProgramPage() {
         console.error(e);
       }
     })();
-  }, []);
+  }, [reloadKey]);
 
   const deloadNow = isDeloadWeek(week, weekCount);
 
   function runAudit() {
-    setAudit(auditWeek(buildPlan(week, weekCount)));
+    setAudit(auditWeek(buildPlan(program, week, weekCount)));
   }
 
   async function toggleCut() {
@@ -121,11 +129,28 @@ export default function ProgramPage() {
 
   return (
     <div className="mx-auto max-w-lg px-4 pt-4">
-      <h1 className="text-2xl font-black">{LEAN5_PROGRAM.name}</h1>
+      <h1 className="text-2xl font-black">{program.name}</h1>
       <p className="text-sm text-ink-faint">
-        {LEAN5_PROGRAM.days_per_week} days/week ·{" "}
+        {program.days_per_week} days/week ·{" "}
         {complete ? "mesocycle complete" : deloadNow ? "deload week" : `week ${week} of ${weekCount}`}
       </p>
+
+      {/* Next block — AI review + import (prominent when the block is done) */}
+      {mesoId && (
+        <div className="mt-4">
+          {complete && (
+            <div className="mb-2 rounded-xl bg-[var(--green-bg)] px-3 py-2 text-sm font-bold text-[var(--green)]">
+              Block complete — review it and start the next one.
+            </div>
+          )}
+          <NextBlock
+            currentProgram={program}
+            mesocycleId={mesoId}
+            weekCount={weekCount}
+            onApplied={() => setReloadKey((k) => k + 1)}
+          />
+        </div>
+      )}
 
       {/* Audit gate */}
       <div className="mt-4 rounded-2xl bg-card p-4 shadow-sm">
@@ -144,7 +169,7 @@ export default function ProgramPage() {
       {/* Structure */}
       <h2 className="mb-2 mt-6 text-sm font-bold uppercase tracking-wider text-ink-faint">Structure</h2>
       <div className="flex flex-col gap-2">
-        {LEAN5_PROGRAM.days.map((day) => (
+        {program.days.map((day) => (
           <div key={day.day_order} className="overflow-hidden rounded-2xl bg-card shadow-sm">
             <button
               onClick={() => setOpenDay((o) => (o === day.day_order ? null : day.day_order))}
@@ -200,12 +225,6 @@ export default function ProgramPage() {
           <span className="text-ink-faint">↓</span>
         </button>
 
-        {complete && (
-          <div className="rounded-2xl bg-[var(--green-bg)] p-4 text-center">
-            <div className="font-bold text-[var(--green)]">Mesocycle complete</div>
-            <div className="mb-3 text-xs text-ink-soft">Next-block generation (with rotation confirms) is coming next.</div>
-          </div>
-        )}
       </div>
 
       <div className="h-6" />

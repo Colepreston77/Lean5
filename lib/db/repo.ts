@@ -1,6 +1,8 @@
 "use client";
 
 import { getSupabase } from "@/lib/supabase/client";
+import type { Program } from "@/lib/engine/types";
+import { LEAN5_PROGRAM } from "@/lib/seed/program";
 
 // Data-access layer for the dynamic training data. Program + exercise
 // definitions come from lib/seed (code), everything here is per-user history.
@@ -12,6 +14,8 @@ export interface MesocycleRow {
   week_count: number;
   current_week: number;
   status: string;
+  program_json: Program | null;
+  goal: string | null;
 }
 
 export interface SessionRow {
@@ -65,11 +69,23 @@ export async function getActiveMesocycle(): Promise<MesocycleRow | null> {
   return data;
 }
 
-export async function createMesocycle(programName: string, weekCount = 4): Promise<MesocycleRow> {
+export async function createMesocycle(
+  programName: string,
+  weekCount = 4,
+  programJson: Program | null = null,
+  goal: string | null = null
+): Promise<MesocycleRow> {
   const sb = getSupabase();
   const { data, error } = await sb
     .from("mesocycles")
-    .insert({ program_name: programName, week_count: weekCount, current_week: 1, status: "active" })
+    .insert({
+      program_name: programName,
+      week_count: weekCount,
+      current_week: 1,
+      status: "active",
+      program_json: programJson,
+      goal,
+    })
     .select("*")
     .single();
   if (error) throw error;
@@ -78,6 +94,22 @@ export async function createMesocycle(programName: string, weekCount = 4): Promi
 
 export async function getOrCreateActiveMesocycle(programName: string): Promise<MesocycleRow> {
   return (await getActiveMesocycle()) ?? (await createMesocycle(programName));
+}
+
+/** The Program driving the active mesocycle — its stored program_json, or the default. */
+export async function getActiveProgram(): Promise<Program> {
+  const meso = await getActiveMesocycle();
+  return meso?.program_json ?? LEAN5_PROGRAM;
+}
+
+/**
+ * Start a new block from a validated program: mark the current mesocycle complete
+ * and create a fresh active one carrying the new program_json + goal.
+ */
+export async function startNextMesocycle(program: Program, goal: string | null, weekCount = 4): Promise<MesocycleRow> {
+  const current = await getActiveMesocycle();
+  if (current) await completeMesocycle(current.id);
+  return createMesocycle(program.name, weekCount, program, goal);
 }
 
 export async function setMesocycleWeek(id: string, week: number): Promise<void> {

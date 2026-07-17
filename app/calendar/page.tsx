@@ -7,6 +7,7 @@ import { schedulePosition } from "@/lib/engine/sequence";
 import { isDeloadWeek } from "@/lib/engine/deload";
 import { hasSupabaseConfig } from "@/lib/supabase/client";
 import * as repo from "@/lib/db/repo";
+import type { Program } from "@/lib/engine/types";
 
 interface DayCell {
   week: number;
@@ -18,6 +19,7 @@ interface DayCell {
 export default function CalendarPage() {
   const [cells, setCells] = useState<DayCell[]>([]);
   const [weekCount, setWeekCount] = useState(4);
+  const [program, setProgram] = useState<Program>(LEAN5_PROGRAM);
   const [preview, setPreview] = useState<{ week: number; dayOrder: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -27,20 +29,22 @@ export default function CalendarPage() {
       try {
         if (!hasSupabaseConfig()) throw new Error("Supabase not configured.");
         const meso = await repo.getOrCreateActiveMesocycle(LEAN5_PROGRAM.name);
+        const prog = meso.program_json ?? LEAN5_PROGRAM;
+        setProgram(prog);
         setWeekCount(meso.week_count);
         const completed = await repo.getCompletedCount(meso.id);
-        const pos = schedulePosition(completed, LEAN5_PROGRAM.days_per_week, meso.week_count);
+        const pos = schedulePosition(completed, prog.days_per_week, meso.week_count);
 
         const list: DayCell[] = [];
         let seq = 0;
         for (let w = 1; w <= meso.week_count; w++) {
-          for (let d = 1; d <= LEAN5_PROGRAM.days_per_week; d++) {
+          for (let d = 1; d <= prog.days_per_week; d++) {
             const isDone = seq < completed;
             const isCurrent = w === pos.currentWeek && d === pos.nextDayOrder && !pos.mesocycleComplete;
             list.push({
               week: w,
               dayOrder: d,
-              name: LEAN5_PROGRAM.days[d - 1].name,
+              name: prog.days[d - 1].name,
               status: isDone ? "completed" : isCurrent ? "current" : "upcoming",
             });
             seq++;
@@ -107,7 +111,7 @@ export default function CalendarPage() {
         );
       })}
 
-      {preview && <DayPreview week={preview.week} dayOrder={preview.dayOrder} onClose={() => setPreview(null)} />}
+      {preview && <DayPreview program={program} week={preview.week} dayOrder={preview.dayOrder} onClose={() => setPreview(null)} />}
     </div>
   );
 }
@@ -122,8 +126,8 @@ function StatusDot({ status }: { status: DayCell["status"] }) {
   return <span className={`h-2.5 w-2.5 rounded-full ${cls}`} />;
 }
 
-function DayPreview({ week, dayOrder, onClose }: { week: number; dayOrder: number; onClose: () => void }) {
-  const day = LEAN5_PROGRAM.days[dayOrder - 1];
+function DayPreview({ program, week, dayOrder, onClose }: { program: Program; week: number; dayOrder: number; onClose: () => void }) {
+  const day = program.days[dayOrder - 1];
   return (
     <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40" onClick={onClose}>
       <div className="max-h-[80vh] overflow-y-auto rounded-t-3xl bg-card p-5 pb-safe" onClick={(e) => e.stopPropagation()}>
