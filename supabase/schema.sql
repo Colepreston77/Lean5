@@ -44,11 +44,16 @@ create table if not exists sessions (
   week             int not null,
   date             date,
   status           text not null default 'pending', -- pending | in_progress | completed | skipped
+  -- When the athlete actually tapped "Start" (the timer origin). NULL until then;
+  -- duration is measured from here, not from row creation.
+  started_at       timestamptz,
   duration_seconds int,
   notes            text,
   created_at       timestamptz not null default now()
 );
 create index if not exists sessions_meso_idx on sessions(mesocycle_id);
+-- Migration for existing installs (safe to re-run):
+alter table sessions add column if not exists started_at timestamptz;
 
 -- Set logs --------------------------------------------------------------------
 create table if not exists set_logs (

@@ -50,10 +50,16 @@ function TodayInner() {
   const [swapCounts, setSwapCounts] = useState<Record<string, number>>({});
   const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [nav, setNav] = useState<Nav | null>(null);
+  const [startedAt, setStartedAt] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const mesoRef = useRef<repo.MesocycleRow | null>(null);
   const sessionRef = useRef<repo.SessionRow | null>(null);
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // Latest not-yet-written set-log payloads, keyed by slot:index. Debounced saves
+  // stash here so they can be flushed before a reload/swap/finish or page hide —
+  // otherwise a pending edit is lost when load() re-seeds local state.
+  const pending = useRef<Record<string, Parameters<typeof repo.saveSetLog>[0]>>({});
 
   function goTo(week: number, day: number) {
     router.replace(`/today?week=${week}&day=${day}`);
@@ -110,6 +116,8 @@ function TodayInner() {
 
       const session = await repo.getOrCreateSession(meso.id, dayOrder, week);
       sessionRef.current = session;
+      setNowMs(Date.now());
+      setStartedAt(session.started_at ?? null);
       const existing = await repo.getSetLogsForSession(session.id);
 
       // Seed local set state: target weight prefilled, reps blank unless logged.
@@ -146,29 +154,75 @@ function TodayInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sp, load]);
 
+  // Live elapsed clock while a session is running.
+  useEffect(() => {
+    if (!startedAt || summary) return;
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [startedAt, summary]);
+
+  // Best-effort flush of unsaved edits when the tab is hidden or unloaded.
+  useEffect(() => {
+    const handler = () => {
+      for (const key of Object.keys(pending.current)) {
+        const p = pending.current[key];
+        delete pending.current[key];
+        repo.saveSetLog(p).catch(() => {});
+      }
+    };
+    window.addEventListener("pagehide", handler);
+    return () => window.removeEventListener("pagehide", handler);
+  }, []);
+
+  async function startSession() {
+    const session = sessionRef.current;
+    if (!session) return;
+    try {
+      const updated = await repo.startSession(session.id);
+      sessionRef.current = updated;
+      setNowMs(Date.now());
+      setStartedAt(updated.started_at ?? new Date().toISOString());
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  const flushKey = useCallback(async (key: string) => {
+    clearTimeout(saveTimers.current[key]);
+    const payload = pending.current[key];
+    if (!payload) return;
+    delete pending.current[key];
+    try {
+      await repo.saveSetLog(payload);
+    } catch (e) {
+      console.error("save failed", e);
+    }
+  }, []);
+
+  const flushSaves = useCallback(async () => {
+    await Promise.all(Object.keys(pending.current).map((k) => flushKey(k)));
+  }, [flushKey]);
+
   function persist(slotId: string, exerciseId: string, i: number, s: LocalSet, done: boolean) {
     const session = sessionRef.current;
     const slot = model?.groups.flatMap((g) => g.slots).find((x) => x.slot_id === slotId);
     if (!session || !slot) return;
     const key = `${slotId}:${i}`;
+    pending.current[key] = {
+      session_id: session.id,
+      slot_id: slotId,
+      exercise_id: exerciseId,
+      set_number: i + 1,
+      target_reps_low: slot.reps_low,
+      target_reps_high: slot.reps_high,
+      target_weight: slot.target.targetWeight,
+      actual_weight: s.weight,
+      actual_reps: s.reps,
+      is_warmup: false,
+      completed: done,
+    };
     clearTimeout(saveTimers.current[key]);
-    saveTimers.current[key] = setTimeout(() => {
-      repo
-        .saveSetLog({
-          session_id: session.id,
-          slot_id: slotId,
-          exercise_id: exerciseId,
-          set_number: i + 1,
-          target_reps_low: slot.reps_low,
-          target_reps_high: slot.reps_high,
-          target_weight: slot.target.targetWeight,
-          actual_weight: s.weight,
-          actual_reps: s.reps,
-          is_warmup: false,
-          completed: done,
-        })
-        .catch((e) => console.error("save failed", e));
-    }, 500);
+    saveTimers.current[key] = setTimeout(() => void flushKey(key), 500);
   }
 
   function updateSet(slotId: string, exerciseId: string, i: number, next: LocalSet) {
@@ -206,6 +260,7 @@ function TodayInner() {
       });
       setSwapCounts((c) => ({ ...c, [slotId]: (c[slotId] ?? 0) + 1 }));
       setSwapSlot(null);
+      await flushSaves(); // don't let debounced set edits get dropped by the reload
       await reloadCurrent();
     } catch (e) {
       console.error(e);
@@ -229,6 +284,7 @@ function TodayInner() {
     const session = sessionRef.current;
     const meso = mesoRef.current;
     if (!session || !meso || !model) return;
+    await flushSaves(); // make sure the last set edits are written before we total
 
     let totalVolume = 0;
     let setsDone = 0;
@@ -257,7 +313,9 @@ function TodayInner() {
       }
     }
 
-    const start = new Date(session.created_at ?? Date.now()).getTime();
+    // Duration from when the athlete tapped Start, not row creation. Fall back to
+    // created_at for sessions started before started_at existed.
+    const start = new Date(session.started_at ?? session.created_at ?? Date.now()).getTime();
     const durationSeconds = Math.max(60, Math.round((Date.now() - start) / 1000));
     await repo.completeSession(session.id, durationSeconds);
 
@@ -334,12 +392,26 @@ function TodayInner() {
         </section>
       ))}
 
-      <button
-        onClick={finish}
-        className="mt-8 w-full rounded-2xl bg-ink py-4 text-lg font-bold text-white active:scale-95 transition-transform"
-      >
-        Finish session
-      </button>
+      {startedAt ? (
+        <>
+          <div className="mt-8 text-center text-sm font-semibold text-ink-faint">
+            Elapsed {formatElapsed(Math.max(0, Math.floor((nowMs - new Date(startedAt).getTime()) / 1000)))}
+          </div>
+          <button
+            onClick={finish}
+            className="mt-2 w-full rounded-2xl bg-ink py-4 text-lg font-bold text-white active:scale-95 transition-transform"
+          >
+            Finish session
+          </button>
+        </>
+      ) : (
+        <button
+          onClick={startSession}
+          className="mt-8 w-full rounded-2xl bg-[var(--green)] py-4 text-lg font-bold text-white active:scale-95 transition-transform"
+        >
+          Start session
+        </button>
+      )}
 
       {swapSlotView && (
         <SwapSheet
@@ -442,4 +514,13 @@ function Badge({ children, className }: { children: React.ReactNode; className?:
 
 function CenterMsg({ children }: { children: React.ReactNode }) {
   return <div className="flex flex-1 flex-col items-center justify-center px-8 pt-24 text-center">{children}</div>;
+}
+
+/** Seconds -> "M:SS" (or "H:MM:SS" past an hour). */
+function formatElapsed(totalSeconds: number): string {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }

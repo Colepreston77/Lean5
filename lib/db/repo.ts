@@ -25,6 +25,7 @@ export interface SessionRow {
   week: number;
   date: string | null;
   status: string;
+  started_at: string | null;
   duration_seconds: number | null;
   notes: string | null;
   created_at: string;
@@ -173,9 +174,22 @@ export async function getOrCreateSession(
       mesocycle_id: mesocycleId,
       program_day_order: dayOrder,
       week,
-      status: "in_progress",
+      status: "pending",
       date: new Date().toISOString().slice(0, 10),
     })
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+/** Mark a pending session as started — stamps the timer origin (started_at). */
+export async function startSession(id: string): Promise<SessionRow> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("sessions")
+    .update({ status: "in_progress", started_at: new Date().toISOString() })
+    .eq("id", id)
     .select("*")
     .single();
   if (error) throw error;
