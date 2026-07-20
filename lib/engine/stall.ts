@@ -1,6 +1,6 @@
 // Stall detection: no increase in best set (by e1RM) for N consecutive sessions.
 
-import { epley1RM, type WeightReps } from "./oneRepMax";
+import { epley1RM, isLoggedSet, type WeightReps } from "./oneRepMax";
 
 export const STALL_THRESHOLD = 3;
 
@@ -10,7 +10,7 @@ export const STALL_THRESHOLD = 3;
  * (each session <= the best seen before that run).
  */
 export function isStalled(sessionBests: WeightReps[], threshold = STALL_THRESHOLD): boolean {
-  const valid = sessionBests.filter((s) => s.weight > 0 && s.reps > 0);
+  const valid = sessionBests.filter(isLoggedSet);
   if (valid.length < threshold) return false;
 
   const e1rms = valid.map((s) => epley1RM(s.weight, s.reps));

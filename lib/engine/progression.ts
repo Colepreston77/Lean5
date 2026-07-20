@@ -2,7 +2,7 @@
 // Pure functions: given last session's working sets for a slot, decide the next
 // target and the UI hint. No DB, no dates.
 
-import { bestSetByE1RM, type WeightReps } from "./oneRepMax";
+import { bestSetByE1RM, isLoggedSet, type WeightReps } from "./oneRepMax";
 
 export type ProgressionAction =
   | "increase" // hit top of range on all sets -> add weight, reset reps to bottom
@@ -44,7 +44,7 @@ export function roundToPlate(weight: number, step = 2.5): number {
  */
 export function computeNextTarget(ctx: ProgressionContext): NextTarget {
   const { lastSets, repsLow, repsHigh, increment } = ctx;
-  const sets = lastSets.filter((s) => s.weight > 0 && s.reps > 0);
+  const sets = lastSets.filter(isLoggedSet);
 
   if (sets.length === 0) {
     return { action: "first", targetWeight: null, targetRepsLow: repsLow, targetRepsHigh: repsHigh };
@@ -99,7 +99,7 @@ export function getProgressionHint(ctx: HintContext): ProgressionHint {
     return { color: "blue", text: "Easy day — half sets, same weight", action: "deload" };
   }
 
-  const sets = ctx.lastSets.filter((s) => s.weight > 0 && s.reps > 0);
+  const sets = ctx.lastSets.filter(isLoggedSet);
   if (!ctx.hasHistory || sets.length === 0) {
     return { color: "grey", text: "First time — find your weight", action: "first" };
   }

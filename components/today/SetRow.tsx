@@ -35,6 +35,8 @@ export default function SetRow({
             ariaLabel={`set ${setNumber} weight`}
             value={local.weight}
             step={weightStep}
+            // Allow negative loads for machine-assisted pull-ups/chin-ups.
+            min={Number.NEGATIVE_INFINITY}
             onChange={(w) => onChange({ ...local, weight: w })}
             unit="lb"
           />

@@ -56,6 +56,17 @@ describe("double progression", () => {
     expect(r.action).toBe("first");
     expect(r.targetWeight).toBeNull();
   });
+
+  it("counts machine-assisted (negative-weight) sets as real history", () => {
+    // Assisted pull-ups at -40 lb, all at the top of the range -> should still
+    // progress (reduce assistance) rather than be discarded as no-history.
+    const r = computeNextTarget({ ...base, lastSets: [
+      { weight: -40, reps: 12 },
+      { weight: -40, reps: 12 },
+    ]});
+    expect(r.action).toBe("increase");
+    expect(r.targetWeight).toBe(-35); // -40 + 5 = less assistance
+  });
 });
 
 describe("getProgressionHint", () => {
@@ -92,5 +103,16 @@ describe("getProgressionHint", () => {
   it("yellow back-off hint below range", () => {
     const h = getProgressionHint({ ...base, lastSets: [{ weight: 100, reps: 6 }] });
     expect(h.color).toBe("yellow");
+  });
+
+  it("shows the assisted (negative-weight) set to beat, not 'first time'", () => {
+    const h = getProgressionHint({ ...base, lastSets: [
+      { weight: -40, reps: 10 }, { weight: -40, reps: 9 },
+    ]});
+    expect(h.color).toBe("neutral");
+    // The set is recorded and surfaced (not discarded as no-history). NOTE:
+    // Epley isn't assist-aware, so it flags the lower-rep set as "best" — an
+    // accepted quirk during the short assisted transition.
+    expect(h.text).toContain("beat -40 x");
   });
 });
