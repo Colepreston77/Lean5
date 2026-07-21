@@ -74,6 +74,24 @@ create table if not exists set_logs (
 create index if not exists set_logs_session_idx on set_logs(session_id);
 create index if not exists set_logs_slot_idx on set_logs(slot_id);
 
+-- Migration (safe to re-run): a set is uniquely (session, slot, set_number).
+-- 1) De-dupe any legacy duplicate rows (from the pre-upsert save race), keeping
+--    the best copy per set: a reps-bearing row wins, then most recently completed,
+--    then newest. 2) Add the unique index the upsert save path relies on.
+delete from set_logs s using (
+  select id from (
+    select id, row_number() over (
+      partition by session_id, slot_id, set_number
+      order by (actual_reps is not null) desc, completed_at desc nulls last, created_at desc, id desc
+    ) as rn
+    from set_logs
+  ) ranked
+  where ranked.rn > 1
+) losers
+where s.id = losers.id;
+create unique index if not exists set_logs_unique_set
+  on set_logs(session_id, slot_id, set_number);
+
 -- Swaps -----------------------------------------------------------------------
 create table if not exists swaps (
   id               uuid primary key default gen_random_uuid(),

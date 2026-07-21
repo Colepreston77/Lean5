@@ -44,6 +44,7 @@ export interface SetLogRow {
   actual_reps: number | null;
   is_warmup: boolean;
   completed_at: string | null;
+  created_at: string;
 }
 
 export interface SwapRow {
@@ -211,7 +212,27 @@ export async function getSetLogsForSession(sessionId: string): Promise<SetLogRow
   const sb = getSupabase();
   const { data, error } = await sb.from("set_logs").select("*").eq("session_id", sessionId);
   if (error) throw error;
-  return data ?? [];
+  const rows = data ?? [];
+
+  // Defensive de-dupe: legacy rows (pre unique-index) may hold several copies of
+  // the same set, some captured mid-entry with actual_reps null. Keep the best
+  // row per (slot_id, set_number): a reps-bearing row wins, then the most recently
+  // completed, then the newest. Prevents .find() picking a blank-reps duplicate.
+  const best = new Map<string, SetLogRow>();
+  for (const r of rows) {
+    const key = `${r.slot_id}:${r.set_number}`;
+    const cur = best.get(key);
+    if (!cur || isBetterSetLog(r, cur)) best.set(key, r);
+  }
+  return [...best.values()];
+}
+
+function isBetterSetLog(a: SetLogRow, b: SetLogRow): boolean {
+  const aReps = a.actual_reps != null, bReps = b.actual_reps != null;
+  if (aReps !== bReps) return aReps; // reps-bearing beats blank
+  const ac = a.completed_at ?? "", bc = b.completed_at ?? "";
+  if (ac !== bc) return ac > bc; // more recently completed
+  return (a.created_at ?? "") > (b.created_at ?? ""); // newest
 }
 
 /**
@@ -265,15 +286,6 @@ export async function saveSetLog(row: {
   completed: boolean;
 }): Promise<void> {
   const sb = getSupabase();
-  // find existing
-  const { data: existing } = await sb
-    .from("set_logs")
-    .select("id")
-    .eq("session_id", row.session_id)
-    .eq("slot_id", row.slot_id)
-    .eq("set_number", row.set_number)
-    .maybeSingle();
-
   const payload = {
     session_id: row.session_id,
     slot_id: row.slot_id,
@@ -288,12 +300,36 @@ export async function saveSetLog(row: {
     completed_at: row.completed ? new Date().toISOString() : null,
   };
 
+  // Atomic upsert keyed on the natural set identity. The prior select-then-
+  // insert/update raced under rapid debounced+flushed saves: parallel calls all
+  // ran their existence check before any insert committed, so each inserted a
+  // duplicate row (some captured mid-entry with actual_reps still null). The
+  // unique index on (session_id, slot_id, set_number) — see schema.sql — makes
+  // this a single write that can only ever touch one row.
+  const { error } = await sb
+    .from("set_logs")
+    .upsert(payload, { onConflict: "session_id,slot_id,set_number" });
+  if (!error) return;
+
+  // Fallback for installs that haven't applied the unique-index migration yet
+  // (Postgres 42P10: "no unique constraint matching ON CONFLICT"). Preserves the
+  // legacy select-then-write so saving never breaks in the deploy→migrate window.
+  if (error.code !== "42P10") throw error;
+  const { data: existing } = await sb
+    .from("set_logs")
+    .select("id")
+    .eq("session_id", row.session_id)
+    .eq("slot_id", row.slot_id)
+    .eq("set_number", row.set_number)
+    .order("actual_reps", { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
   if (existing) {
-    const { error } = await sb.from("set_logs").update(payload).eq("id", existing.id);
-    if (error) throw error;
+    const { error: e } = await sb.from("set_logs").update(payload).eq("id", existing.id);
+    if (e) throw e;
   } else {
-    const { error } = await sb.from("set_logs").insert(payload);
-    if (error) throw error;
+    const { error: e } = await sb.from("set_logs").insert(payload);
+    if (e) throw e;
   }
 }
 
