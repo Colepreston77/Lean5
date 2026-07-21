@@ -150,23 +150,31 @@ export async function getCompletedCount(mesocycleId: string): Promise<number> {
   return count ?? 0;
 }
 
-/** Find the current in-progress/pending session for a day, or create one. */
+/**
+ * Get the session for a (day, week), or create one. A COMPLETED session wins:
+ * once a day is logged, revisiting it must show that logged data, not a fresh
+ * empty session. Without this, navigating back to a finished day skipped the
+ * completed row (which holds the reps) and loaded/created an empty pending one —
+ * so the day showed prefilled target weights but no reps, and every visit spawned
+ * another empty duplicate. Falls back to an active (pending/in_progress) session,
+ * else creates a pending one.
+ */
 export async function getOrCreateSession(
   mesocycleId: string,
   dayOrder: number,
   week: number
 ): Promise<SessionRow> {
   const sb = getSupabase();
-  const { data: existing } = await sb
+  const { data: rows } = await sb
     .from("sessions")
     .select("*")
     .eq("mesocycle_id", mesocycleId)
     .eq("program_day_order", dayOrder)
     .eq("week", week)
-    .in("status", ["pending", "in_progress"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .order("created_at", { ascending: false });
+  const existing =
+    rows?.find((s) => s.status === "completed") ??
+    rows?.find((s) => s.status === "pending" || s.status === "in_progress");
   if (existing) return existing;
 
   const { data, error } = await sb
