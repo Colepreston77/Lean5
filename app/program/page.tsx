@@ -10,6 +10,7 @@ import { hasSupabaseConfig } from "@/lib/supabase/client";
 import * as repo from "@/lib/db/repo";
 import type { Program } from "@/lib/engine/types";
 import NextBlock from "@/components/program/NextBlock";
+import AdaptDay from "@/components/program/AdaptDay";
 
 // Build an audit WeekPlan for a given week (cold-start style: null targets ok).
 function buildPlan(program: Program, week: number, weekCount: number): WeekPlan {
@@ -149,6 +150,13 @@ export default function ProgramPage() {
             weekCount={weekCount}
             onApplied={() => setReloadKey((k) => k + 1)}
           />
+          <div className="mt-3">
+            <AdaptDay
+              currentProgram={program}
+              mesocycleId={mesoId}
+              onApplied={() => setReloadKey((k) => k + 1)}
+            />
+          </div>
         </div>
       )}
 

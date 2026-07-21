@@ -391,6 +391,33 @@ export async function recordSwap(row: {
   if (error) throw error;
 }
 
+/** Remove every swap for a slot in a mesocycle (reverts it to the base program). */
+export async function clearSwapsForSlot(mesocycleId: string, slotId: string): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb.from("swaps").delete().eq("mesocycle_id", mesocycleId).eq("slot_id", slotId);
+  if (error) throw error;
+}
+
+/**
+ * Apply an AI day adaptation as swaps. Each change replaces any prior swap on that
+ * slot (so a slot resolves to exactly one exercise), keeping the block's structure
+ * intact. Fully reversible via clearSwapsForSlot / the manual swap sheet.
+ */
+export async function applyDaySwaps(
+  mesocycleId: string,
+  changes: { slot_id: string; from_exercise_id: string; to_exercise_id: string }[]
+): Promise<void> {
+  for (const c of changes) {
+    await clearSwapsForSlot(mesocycleId, c.slot_id);
+    await recordSwap({
+      mesocycle_id: mesocycleId,
+      slot_id: c.slot_id,
+      from_exercise_id: c.from_exercise_id,
+      to_exercise_id: c.to_exercise_id,
+    });
+  }
+}
+
 export interface ExportRow {
   date: string | null;
   program_day_order: number;
