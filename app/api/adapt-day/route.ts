@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { callOpenAI, parseModelJson } from "@/lib/ai/openai";
+import { callClaude } from "@/lib/ai/anthropic";
+import { parseModelJson } from "@/lib/ai/json";
 import {
   ADAPT_SYSTEM_PROMPT,
   buildDayAdaptPrompt,
@@ -50,7 +51,7 @@ export async function POST(req: Request) {
   });
 
   try {
-    let raw = await callOpenAI(basePrompt, ADAPT_SYSTEM_PROMPT);
+    let raw = await callClaude({ system: ADAPT_SYSTEM_PROMPT, prompt: basePrompt, webSearch: true, maxTokens: 4096 });
     let result = validateDayAdaptation(safeParse(raw), body.slots);
 
     // One corrective re-prompt if a swap broke the rules (wrong muscle, bad id).
@@ -58,7 +59,7 @@ export async function POST(req: Request) {
       const retry =
         basePrompt +
         `\n\nYOUR PREVIOUS OUTPUT FAILED VALIDATION:\n- ${result.errors.join("\n- ")}\nReturn corrected JSON only, fixing every issue. Keep each replacement on the same primary muscle as the slot.`;
-      raw = await callOpenAI(retry, ADAPT_SYSTEM_PROMPT);
+      raw = await callClaude({ system: ADAPT_SYSTEM_PROMPT, prompt: retry, webSearch: true, maxTokens: 4096 });
       result = validateDayAdaptation(safeParse(raw), body.slots);
     }
 

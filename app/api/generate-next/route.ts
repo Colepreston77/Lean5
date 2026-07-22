@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
 import { buildGenerationPrompt, SYSTEM_PROMPT } from "@/lib/ai/prompt";
 import { validateGeneratedProgram } from "@/lib/ai/contract";
-import { callOpenAI, parseModelJson } from "@/lib/ai/openai";
+import { callClaude } from "@/lib/ai/anthropic";
+import { parseModelJson } from "@/lib/ai/json";
 import type { Program } from "@/lib/engine/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 // Door 1: in-app AI mesocycle review. Takes the block summary + current program,
-// asks OpenAI (with web search) for the next block, validates it, and re-prompts
+// asks Claude (with web search) for the next block, validates it, and re-prompts
 // once if validation fails. Never returns an unvalidated program to the client.
 
 interface Body {
@@ -38,7 +39,7 @@ export async function POST(req: Request) {
 
   try {
     // First attempt.
-    let raw = await callOpenAI(basePrompt, SYSTEM_PROMPT);
+    let raw = await callClaude({ system: SYSTEM_PROMPT, prompt: basePrompt, webSearch: true, maxTokens: 8192 });
     let validation = validateGeneratedProgram(safeParse(raw), weekCount);
 
     // One corrective re-prompt if it failed validation.
@@ -47,7 +48,7 @@ export async function POST(req: Request) {
       const retryPrompt =
         basePrompt +
         `\n\nYOUR PREVIOUS OUTPUT FAILED VALIDATION:\n- ${problems.join("\n- ")}\nReturn corrected JSON only, fixing every issue above.`;
-      raw = await callOpenAI(retryPrompt, SYSTEM_PROMPT);
+      raw = await callClaude({ system: SYSTEM_PROMPT, prompt: retryPrompt, webSearch: true, maxTokens: 8192 });
       validation = validateGeneratedProgram(safeParse(raw), weekCount);
     }
 

@@ -26,8 +26,32 @@ export default function ExerciseCard({
   startExpanded?: boolean;
 }) {
   const [open, setOpen] = useState(Boolean(startExpanded));
+  const [coach, setCoach] = useState<{ busy: boolean; advice: string; error: string }>({ busy: false, advice: "", error: "" });
   const doneCount = sets.filter((s) => s.done).length;
   const allDone = slot.sets > 0 && doneCount >= slot.sets;
+
+  async function askCoach() {
+    setCoach({ busy: true, advice: "", error: "" });
+    try {
+      const res = await fetch("/api/coach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          exerciseName: slot.exercise.name,
+          repsLow: slot.reps_low,
+          repsHigh: slot.reps_high,
+          rirTarget: slot.rir_target,
+          targetSets: slot.sets,
+          sets: sets.map((s) => ({ weight: s.weight, reps: s.reps, done: s.done })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) setCoach({ busy: false, advice: "", error: data.error || "Coach unavailable." });
+      else setCoach({ busy: false, advice: data.advice || "", error: "" });
+    } catch (e) {
+      setCoach({ busy: false, advice: "", error: e instanceof Error ? e.message : "Coach unavailable." });
+    }
+  }
   const repRange = slot.reps_label ?? `${slot.reps_low}-${slot.reps_high}`;
   const weightStep = slot.exercise.weight_increment >= 5 ? 5 : 2.5;
 
@@ -137,6 +161,20 @@ export default function ExerciseCard({
               className="mt-2 w-full resize-none rounded-xl border border-line bg-card px-3 py-2 text-sm outline-none focus:border-ink"
             />
           )}
+
+          <div className="mt-2">
+            <button
+              onClick={askCoach}
+              disabled={coach.busy}
+              className="rounded-xl bg-[var(--neutral-bg)] px-3 py-1.5 text-xs font-semibold text-ink-soft disabled:opacity-50"
+            >
+              {coach.busy ? "Asking coach…" : "Ask coach: another set?"}
+            </button>
+            {coach.advice && (
+              <div className="mt-2 rounded-xl bg-[var(--blue-bg)] px-3 py-2 text-sm text-ink">{coach.advice}</div>
+            )}
+            {coach.error && <div className="mt-2 text-xs text-red-700">{coach.error}</div>}
+          </div>
         </div>
       )}
     </div>
