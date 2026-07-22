@@ -22,8 +22,8 @@ const DAYS: DayDef[] = [
   {
     name: "Upper A — Width & Upper Chest",
     slots: [
-      { group: "A", name: "Incline DB Press", sets: 3, reps: "8-12", rir: "1-2" },
-      { group: "A", name: "Weighted Pull-Up", sets: 3, reps: "8-12", rir: "1-2" },
+      { group: "A", name: "Incline DB Press", sets: 4, reps: "8-12", rir: "1-2" },
+      { group: "A", name: "Weighted Pull-Up", sets: 4, reps: "8-12", rir: "1-2" },
       { group: "B", name: "Seated Cable Row (Neutral)", sets: 3, reps: "10-12", rir: "1-2" },
       { group: "B", name: "Cable Lateral Raise", sets: 3, reps: "12-15", rir: "0-1", ramp: true },
       { group: "C", name: "Overhead Cable Triceps Extension", sets: 3, reps: "10-15", rir: "0-1" },
