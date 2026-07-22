@@ -195,14 +195,73 @@ export async function getOrCreateSession(
 /** Mark a pending session as started — stamps the timer origin (started_at). */
 export async function startSession(id: string): Promise<SessionRow> {
   const sb = getSupabase();
+  const startedAt = new Date().toISOString();
   const { data, error } = await sb
     .from("sessions")
-    .update({ status: "in_progress", started_at: new Date().toISOString() })
+    .update({ status: "in_progress", started_at: startedAt })
     .eq("id", id)
     .select("*")
     .single();
-  if (error) throw error;
-  return data;
+  if (!error) return data;
+
+  // Resilience: if the started_at column hasn't been migrated yet (Postgres
+  // 42703 undefined_column), don't let Start silently fail — still flip the
+  // status and return a client-stamped started_at so the timer + Finish button
+  // work. Run `alter table sessions add column if not exists started_at timestamptz;`
+  // to persist the real timer origin.
+  if (error.code !== "42703") throw error;
+  const { data: fallback, error: e2 } = await sb
+    .from("sessions")
+    .update({ status: "in_progress" })
+    .eq("id", id)
+    .select("*")
+    .single();
+  if (e2) throw e2;
+  return { ...fallback, started_at: fallback.started_at ?? startedAt };
+}
+
+// --- Per-exercise notes -------------------------------------------------------
+// A small free-text jot per (session, slot) — e.g. "knee felt off on set 2".
+
+export async function getExerciseNotes(sessionId: string): Promise<Record<string, string>> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("exercise_notes")
+    .select("slot_id, note")
+    .eq("session_id", sessionId);
+  if (error) {
+    if (error.code === "42P01") return {}; // table not migrated yet — no notes
+    throw error;
+  }
+  const out: Record<string, string> = {};
+  for (const r of data ?? []) out[r.slot_id] = r.note ?? "";
+  return out;
+}
+
+export async function saveExerciseNote(row: {
+  session_id: string;
+  slot_id: string;
+  note: string;
+}): Promise<void> {
+  const sb = getSupabase();
+  const payload = { ...row, updated_at: new Date().toISOString() };
+  const { error } = await sb.from("exercise_notes").upsert(payload, { onConflict: "session_id,slot_id" });
+  if (!error) return;
+  // Fallback if the unique index isn't present yet (42P10) — select then write.
+  if (error.code !== "42P10") throw error;
+  const { data: existing } = await sb
+    .from("exercise_notes")
+    .select("id")
+    .eq("session_id", row.session_id)
+    .eq("slot_id", row.slot_id)
+    .maybeSingle();
+  if (existing) {
+    const { error: e } = await sb.from("exercise_notes").update(payload).eq("id", existing.id);
+    if (e) throw e;
+  } else {
+    const { error: e } = await sb.from("exercise_notes").insert(payload);
+    if (e) throw e;
+  }
 }
 
 export async function completeSession(id: string, durationSeconds: number, notes?: string): Promise<void> {

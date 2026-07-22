@@ -9,6 +9,8 @@ import { rirGuide } from "@/lib/app/rir";
 export default function ExerciseCard({
   slot,
   sets,
+  note,
+  onNoteChange,
   onSetChange,
   onToggleDone,
   onSwap,
@@ -16,6 +18,8 @@ export default function ExerciseCard({
 }: {
   slot: SlotView;
   sets: LocalSet[];
+  note?: string;
+  onNoteChange?: (text: string) => void;
   onSetChange: (setIndex: number, next: LocalSet) => void;
   onToggleDone: (setIndex: number) => void;
   onSwap: () => void;
@@ -23,6 +27,7 @@ export default function ExerciseCard({
 }) {
   const [open, setOpen] = useState(Boolean(startExpanded));
   const doneCount = sets.filter((s) => s.done).length;
+  const allDone = slot.sets > 0 && doneCount >= slot.sets;
   const repRange = slot.reps_label ?? `${slot.reps_low}-${slot.reps_high}`;
   const weightStep = slot.exercise.weight_increment >= 5 ? 5 : 2.5;
 
@@ -82,8 +87,20 @@ export default function ExerciseCard({
               <path d="M21 13v2a4 4 0 0 1-4 4H3" />
             </svg>
           </span>
-          <span className="text-[11px] font-semibold text-ink-faint">
+          <span className="flex items-center gap-1.5 text-[11px] font-semibold text-ink-faint">
             {doneCount}/{slot.sets}
+            <span
+              aria-label={allDone ? "all sets complete" : "sets incomplete"}
+              className={`flex h-4 w-4 items-center justify-center rounded-full border-2 ${
+                allDone ? "border-[var(--green)] bg-[var(--green)] text-white" : "border-line"
+              }`}
+            >
+              {allDone && (
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 6L9 17l-5-5" />
+                </svg>
+              )}
+            </span>
           </span>
         </div>
       </button>
@@ -111,6 +128,15 @@ export default function ExerciseCard({
               onToggleDone={() => onToggleDone(i)}
             />
           ))}
+          {onNoteChange && (
+            <textarea
+              value={note ?? ""}
+              onChange={(e) => onNoteChange(e.target.value)}
+              rows={1}
+              placeholder="Note (e.g. felt easy, knee tender on set 2)…"
+              className="mt-2 w-full resize-none rounded-xl border border-line bg-card px-3 py-2 text-sm outline-none focus:border-ink"
+            />
+          )}
         </div>
       )}
     </div>

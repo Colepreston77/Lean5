@@ -92,6 +92,18 @@ where s.id = losers.id;
 create unique index if not exists set_logs_unique_set
   on set_logs(session_id, slot_id, set_number);
 
+-- Per-exercise notes ----------------------------------------------------------
+-- One free-text jot per (session, slot). Additive, safe to re-run.
+create table if not exists exercise_notes (
+  id           uuid primary key default gen_random_uuid(),
+  session_id   uuid not null references sessions(id) on delete cascade,
+  slot_id      text not null,
+  note         text not null default '',
+  updated_at   timestamptz not null default now(),
+  created_at   timestamptz not null default now()
+);
+create unique index if not exists exercise_notes_unique on exercise_notes(session_id, slot_id);
+
 -- Swaps -----------------------------------------------------------------------
 create table if not exists swaps (
   id               uuid primary key default gen_random_uuid(),
@@ -108,16 +120,17 @@ create index if not exists swaps_meso_idx on swaps(mesocycle_id);
 -- enable RLS with permissive policies so the public anon key can read/write.
 -- NOTE: with these policies, anyone holding the anon key + project URL can access
 -- the data. Acceptable for a private single-user app; revisit if that changes.
-alter table settings   enable row level security;
-alter table mesocycles enable row level security;
-alter table sessions   enable row level security;
-alter table set_logs   enable row level security;
-alter table swaps      enable row level security;
+alter table settings       enable row level security;
+alter table mesocycles     enable row level security;
+alter table sessions       enable row level security;
+alter table set_logs       enable row level security;
+alter table swaps          enable row level security;
+alter table exercise_notes enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['settings','mesocycles','sessions','set_logs','swaps'] loop
+  foreach t in array array['settings','mesocycles','sessions','set_logs','swaps','exercise_notes'] loop
     execute format('drop policy if exists anon_all on %I;', t);
     execute format('create policy anon_all on %I for all to anon, authenticated using (true) with check (true);', t);
   end loop;

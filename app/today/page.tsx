@@ -52,6 +52,7 @@ function TodayInner() {
   const [nav, setNav] = useState<Nav | null>(null);
   const [startedAt, setStartedAt] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [notesBySlot, setNotesBySlot] = useState<Record<string, string>>({});
 
   const mesoRef = useRef<repo.MesocycleRow | null>(null);
   const sessionRef = useRef<repo.SessionRow | null>(null);
@@ -60,6 +61,9 @@ function TodayInner() {
   // stash here so they can be flushed before a reload/swap/finish or page hide —
   // otherwise a pending edit is lost when load() re-seeds local state.
   const pending = useRef<Record<string, Parameters<typeof repo.saveSetLog>[0]>>({});
+  // Same stash/flush pattern for per-exercise notes, keyed by slot_id.
+  const notePending = useRef<Record<string, Parameters<typeof repo.saveExerciseNote>[0]>>({});
+  const noteTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   function goTo(week: number, day: number) {
     router.replace(`/today?week=${week}&day=${day}`);
@@ -118,6 +122,7 @@ function TodayInner() {
       sessionRef.current = session;
       setNowMs(Date.now());
       setStartedAt(session.started_at ?? null);
+      setNotesBySlot(await repo.getExerciseNotes(session.id));
       const existing = await repo.getSetLogsForSession(session.id);
 
       // Seed local set state: target weight prefilled, reps blank unless logged.
@@ -169,6 +174,11 @@ function TodayInner() {
         delete pending.current[key];
         repo.saveSetLog(p).catch(() => {});
       }
+      for (const key of Object.keys(notePending.current)) {
+        const p = notePending.current[key];
+        delete notePending.current[key];
+        repo.saveExerciseNote(p).catch(() => {});
+      }
     };
     window.addEventListener("pagehide", handler);
     return () => window.removeEventListener("pagehide", handler);
@@ -199,9 +209,33 @@ function TodayInner() {
     }
   }, []);
 
+  const flushNote = useCallback(async (slotId: string) => {
+    clearTimeout(noteTimers.current[slotId]);
+    const payload = notePending.current[slotId];
+    if (!payload) return;
+    delete notePending.current[slotId];
+    try {
+      await repo.saveExerciseNote(payload);
+    } catch (e) {
+      console.error("note save failed", e);
+    }
+  }, []);
+
   const flushSaves = useCallback(async () => {
-    await Promise.all(Object.keys(pending.current).map((k) => flushKey(k)));
-  }, [flushKey]);
+    await Promise.all([
+      ...Object.keys(pending.current).map((k) => flushKey(k)),
+      ...Object.keys(notePending.current).map((k) => flushNote(k)),
+    ]);
+  }, [flushKey, flushNote]);
+
+  function updateNote(slotId: string, note: string) {
+    setNotesBySlot((prev) => ({ ...prev, [slotId]: note }));
+    const session = sessionRef.current;
+    if (!session) return;
+    notePending.current[slotId] = { session_id: session.id, slot_id: slotId, note };
+    clearTimeout(noteTimers.current[slotId]);
+    noteTimers.current[slotId] = setTimeout(() => void flushNote(slotId), 600);
+  }
 
   function persist(slotId: string, exerciseId: string, i: number, s: LocalSet, done: boolean) {
     const session = sessionRef.current;
@@ -383,6 +417,8 @@ function TodayInner() {
                 slot={slot}
                 sets={setsBySlot[slot.slot_id] ?? []}
                 startExpanded={group.group === "A" && idx === 0}
+                note={notesBySlot[slot.slot_id] ?? ""}
+                onNoteChange={(text) => updateNote(slot.slot_id, text)}
                 onSetChange={(i, next) => updateSet(slot.slot_id, slot.exercise.id, i, next)}
                 onToggleDone={(i) => toggleDone(slot.slot_id, slot.exercise.id, i)}
                 onSwap={() => setSwapSlot(slot.slot_id)}
