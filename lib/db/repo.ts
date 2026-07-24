@@ -303,12 +303,16 @@ function isBetterSetLog(a: SetLogRow, b: SetLogRow): boolean {
 }
 
 /**
- * Most recent COMPLETED working sets for a slot, before `beforeSessionId` if given.
- * Returns the sets from the single latest session that logged this slot.
+ * Most recent COMPLETED working sets for a slot. Prefers the slot's own history;
+ * if the slot has none yet, falls back to the last time the SAME exercise was
+ * logged on any slot this block (so an exercise that appears on two days — e.g.
+ * cable lateral raises on Upper A and Day 5 — still shows a "last time" reference
+ * the second time you do it). Returns the sets from that single latest session.
  */
 export async function getLastWorkingSets(
   mesocycleId: string,
-  slotId: string
+  slotId: string,
+  exerciseId?: string
 ): Promise<{ weight: number; reps: number; set_number: number }[]> {
   const sb = getSupabase();
   // sessions for this meso, newest first
@@ -320,21 +324,30 @@ export async function getLastWorkingSets(
     .order("created_at", { ascending: false });
   if (!sessions?.length) return [];
 
-  for (const s of sessions) {
-    const { data: logs } = await sb
-      .from("set_logs")
-      .select("actual_weight, actual_reps, set_number")
-      .eq("session_id", s.id)
-      .eq("slot_id", slotId)
-      .eq("is_warmup", false)
-      .not("actual_reps", "is", null)
-      .order("set_number", { ascending: true });
-    if (logs && logs.length) {
-      return logs
-        .filter((l) => l.actual_weight != null && l.actual_reps != null)
-        .map((l) => ({ weight: Number(l.actual_weight), reps: Number(l.actual_reps), set_number: l.set_number }));
+  const fetchFor = async (col: "slot_id" | "exercise_id", value: string) => {
+    for (const s of sessions) {
+      const { data: logs } = await sb
+        .from("set_logs")
+        .select("actual_weight, actual_reps, set_number")
+        .eq("session_id", s.id)
+        .eq(col, value)
+        .eq("is_warmup", false)
+        .not("actual_reps", "is", null)
+        .order("set_number", { ascending: true });
+      if (logs && logs.length) {
+        return logs
+          .filter((l) => l.actual_weight != null && l.actual_reps != null)
+          .map((l) => ({ weight: Number(l.actual_weight), reps: Number(l.actual_reps), set_number: l.set_number }));
+      }
     }
-  }
+    return [];
+  };
+
+  // 1) This slot's own history.
+  const own = await fetchFor("slot_id", slotId);
+  if (own.length) return own;
+  // 2) Fallback: same exercise, any slot (a repeat lift across days).
+  if (exerciseId) return fetchFor("exercise_id", exerciseId);
   return [];
 }
 

@@ -111,7 +111,7 @@ function TodayInner() {
       const { cut_mode } = await repo.getSettings();
 
       const lastPairs = await Promise.all(
-        day.slots.map(async (s) => [s.slot_id, await repo.getLastWorkingSets(meso.id, s.slot_id)] as const)
+        day.slots.map(async (s) => [s.slot_id, await repo.getLastWorkingSets(meso.id, s.slot_id, swaps[s.slot_id] ?? s.exercise_id)] as const)
       );
       const lastSetsBySlot = Object.fromEntries(lastPairs);
 
