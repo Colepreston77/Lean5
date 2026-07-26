@@ -92,8 +92,8 @@ function TodayInner() {
         week = Math.min(Math.max(1, target.week), meso.week_count);
         dayOrder = Math.min(Math.max(1, target.day), daysPerWeek);
       } else {
-        const completed = await repo.getCompletedCount(meso.id);
-        const pos = schedulePosition(completed, daysPerWeek, meso.week_count);
+        const finished = await repo.getFinishedCount(meso.id);
+        const pos = schedulePosition(finished, daysPerWeek, meso.week_count);
         if (pos.mesocycleComplete) return setState("meso_complete");
         week = pos.currentWeek;
         dayOrder = pos.nextDayOrder;
@@ -192,6 +192,19 @@ function TodayInner() {
       sessionRef.current = updated;
       setNowMs(Date.now());
       setStartedAt(updated.started_at ?? new Date().toISOString());
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function skipDay() {
+    const session = sessionRef.current;
+    if (!session) return;
+    if (!window.confirm("Skip this workout for the week? It won't be logged, and the sequence moves on to the next workout.")) return;
+    try {
+      await repo.skipSession(session.id);
+      router.replace("/today"); // back to the sequence, now advanced past this day
+      await load();
     } catch (e) {
       console.error(e);
     }
@@ -353,9 +366,9 @@ function TodayInner() {
     const durationSeconds = Math.max(60, Math.round((Date.now() - start) / 1000));
     await repo.completeSession(session.id, durationSeconds);
 
-    const newCompleted = (await repo.getCompletedCount(meso.id));
+    const newFinished = await repo.getFinishedCount(meso.id);
     const program = meso.program_json ?? LEAN5_PROGRAM;
-    const pos = schedulePosition(newCompleted, program.days_per_week, meso.week_count);
+    const pos = schedulePosition(newFinished, program.days_per_week, meso.week_count);
     await repo.setMesocycleWeek(meso.id, pos.currentWeek);
     if (pos.mesocycleComplete) await repo.completeMesocycle(meso.id);
 
@@ -441,12 +454,20 @@ function TodayInner() {
           </button>
         </>
       ) : (
-        <button
-          onClick={startSession}
-          className="mt-8 w-full rounded-2xl bg-[var(--green)] py-4 text-lg font-bold text-white active:scale-95 transition-transform"
-        >
-          Start session
-        </button>
+        <>
+          <button
+            onClick={startSession}
+            className="mt-8 w-full rounded-2xl bg-[var(--green)] py-4 text-lg font-bold text-white active:scale-95 transition-transform"
+          >
+            Start session
+          </button>
+          <button
+            onClick={skipDay}
+            className="mt-2 w-full rounded-2xl py-2.5 text-sm font-semibold text-ink-faint underline active:scale-95 transition-transform"
+          >
+            Skip this workout for the week
+          </button>
+        </>
       )}
 
       {swapSlotView && (

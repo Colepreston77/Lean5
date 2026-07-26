@@ -13,7 +13,7 @@ interface DayCell {
   week: number;
   dayOrder: number;
   name: string;
-  status: "completed" | "current" | "upcoming";
+  status: "completed" | "skipped" | "current" | "upcoming";
 }
 
 export default function CalendarPage() {
@@ -36,22 +36,26 @@ export default function CalendarPage() {
         const prog = meso.program_json ?? LEAN5_PROGRAM;
         setProgram(prog);
         setWeekCount(meso.week_count);
-        const completed = await repo.getCompletedCount(meso.id);
-        const pos = schedulePosition(completed, prog.days_per_week, meso.week_count);
+        const finished = await repo.getFinishedCount(meso.id);
+        const pos = schedulePosition(finished, prog.days_per_week, meso.week_count);
+
+        // Real per-day status from actual sessions, so completed/skipped days show
+        // truthfully. Highest-priority status wins per (week, day).
+        const rank: Record<string, number> = { completed: 3, skipped: 2, in_progress: 1, pending: 0 };
+        const realStatus = new Map<string, string>();
+        for (const s of await repo.getSessions(meso.id)) {
+          const key = `${s.week}-${s.program_day_order}`;
+          if ((rank[s.status] ?? -1) > (rank[realStatus.get(key) ?? ""] ?? -1)) realStatus.set(key, s.status);
+        }
 
         const list: DayCell[] = [];
-        let seq = 0;
         for (let w = 1; w <= meso.week_count; w++) {
           for (let d = 1; d <= prog.days_per_week; d++) {
-            const isDone = seq < completed;
+            const real = realStatus.get(`${w}-${d}`);
             const isCurrent = w === pos.currentWeek && d === pos.nextDayOrder && !pos.mesocycleComplete;
-            list.push({
-              week: w,
-              dayOrder: d,
-              name: prog.days[d - 1].name,
-              status: isDone ? "completed" : isCurrent ? "current" : "upcoming",
-            });
-            seq++;
+            const status: DayCell["status"] =
+              real === "completed" ? "completed" : real === "skipped" ? "skipped" : isCurrent ? "current" : "upcoming";
+            list.push({ week: w, dayOrder: d, name: prog.days[d - 1].name, status });
           }
         }
         setCells(list);
@@ -122,6 +126,8 @@ function StatusDot({ status }: { status: DayCell["status"] }) {
   const cls =
     status === "completed"
       ? "bg-[var(--green)]"
+      : status === "skipped"
+      ? "bg-[var(--yellow)]"
       : status === "current"
       ? "bg-ink"
       : "bg-line";

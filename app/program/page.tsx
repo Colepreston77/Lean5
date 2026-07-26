@@ -61,8 +61,8 @@ export default function ProgramPage() {
         setProgram(prog);
         setMesoId(meso.id);
         setWeekCount(meso.week_count);
-        const completed = await repo.getCompletedCount(meso.id);
-        const pos = schedulePosition(completed, prog.days_per_week, meso.week_count);
+        const finished = await repo.getFinishedCount(meso.id);
+        const pos = schedulePosition(finished, prog.days_per_week, meso.week_count);
         setWeek(pos.currentWeek);
         setComplete(pos.mesocycleComplete);
         const s = await repo.getSettings();

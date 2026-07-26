@@ -151,6 +151,29 @@ export async function getCompletedCount(mesocycleId: string): Promise<number> {
 }
 
 /**
+ * Sessions that ADVANCE the sequence cursor: completed OR skipped. A skipped day
+ * still moves the block forward (so a missed workout doesn't trap you before the
+ * next week) — it just carries no logged data or progression.
+ */
+export async function getFinishedCount(mesocycleId: string): Promise<number> {
+  const sb = getSupabase();
+  const { count, error } = await sb
+    .from("sessions")
+    .select("id", { count: "exact", head: true })
+    .eq("mesocycle_id", mesocycleId)
+    .in("status", ["completed", "skipped"]);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+/** Mark a session as skipped for the week — advances the sequence, logs nothing. */
+export async function skipSession(id: string): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb.from("sessions").update({ status: "skipped" }).eq("id", id);
+  if (error) throw error;
+}
+
+/**
  * Get the session for a (day, week), or create one. A COMPLETED session wins:
  * once a day is logged, revisiting it must show that logged data, not a fresh
  * empty session. Without this, navigating back to a finished day skipped the
@@ -174,7 +197,8 @@ export async function getOrCreateSession(
     .order("created_at", { ascending: false });
   const existing =
     rows?.find((s) => s.status === "completed") ??
-    rows?.find((s) => s.status === "pending" || s.status === "in_progress");
+    rows?.find((s) => s.status === "pending" || s.status === "in_progress") ??
+    rows?.find((s) => s.status === "skipped"); // revisit a skipped day (can override by starting it)
   if (existing) return existing;
 
   const { data, error } = await sb
