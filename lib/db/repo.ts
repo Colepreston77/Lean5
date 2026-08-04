@@ -327,11 +327,15 @@ function isBetterSetLog(a: SetLogRow, b: SetLogRow): boolean {
 }
 
 /**
- * Most recent COMPLETED working sets for a slot. Prefers the slot's own history;
- * if the slot has none yet, falls back to the last time the SAME exercise was
- * logged on any slot this block (so an exercise that appears on two days — e.g.
- * cable lateral raises on Upper A and Day 5 — still shows a "last time" reference
- * the second time you do it). Returns the sets from that single latest session.
+ * Most recent COMPLETED working sets to use as the "last time" reference for a
+ * slot. Matched to the CURRENT exercise, not just the slot — so a swapped-in (or
+ * otherwise changed) lift never inherits the weight of whatever the slot held
+ * before. Priority:
+ *   1) this exact lift in this exact slot — the true progression history;
+ *   2) the same exercise on any slot this block (a repeat lift across days — e.g.
+ *      cable lateral raises on Upper A and Day 5 — so it still shows a reference
+ *      the second time you do it).
+ * Returns the sets from that single latest session.
  */
 export async function getLastWorkingSets(
   mesocycleId: string,
@@ -348,16 +352,16 @@ export async function getLastWorkingSets(
     .order("created_at", { ascending: false });
   if (!sessions?.length) return [];
 
-  const fetchFor = async (col: "slot_id" | "exercise_id", value: string) => {
+  const fetchWith = async (filters: Record<string, string>) => {
     for (const s of sessions) {
-      const { data: logs } = await sb
+      let q = sb
         .from("set_logs")
         .select("actual_weight, actual_reps, set_number")
         .eq("session_id", s.id)
-        .eq(col, value)
         .eq("is_warmup", false)
-        .not("actual_reps", "is", null)
-        .order("set_number", { ascending: true });
+        .not("actual_reps", "is", null);
+      for (const [col, value] of Object.entries(filters)) q = q.eq(col, value);
+      const { data: logs } = await q.order("set_number", { ascending: true });
       if (logs && logs.length) {
         return logs
           .filter((l) => l.actual_weight != null && l.actual_reps != null)
@@ -367,12 +371,16 @@ export async function getLastWorkingSets(
     return [];
   };
 
-  // 1) This slot's own history.
-  const own = await fetchFor("slot_id", slotId);
-  if (own.length) return own;
-  // 2) Fallback: same exercise, any slot (a repeat lift across days).
-  if (exerciseId) return fetchFor("exercise_id", exerciseId);
-  return [];
+  if (exerciseId) {
+    // 1) This exact lift in this exact slot.
+    const exact = await fetchWith({ slot_id: slotId, exercise_id: exerciseId });
+    if (exact.length) return exact;
+    // 2) Same exercise on any slot (a repeat lift across days).
+    return fetchWith({ exercise_id: exerciseId });
+  }
+
+  // No exercise known: fall back to whatever this slot last held.
+  return fetchWith({ slot_id: slotId });
 }
 
 /** Upsert a single set log (by session + slot + set_number). */

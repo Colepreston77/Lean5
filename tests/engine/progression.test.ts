@@ -25,13 +25,28 @@ describe("double progression", () => {
     expect(r.targetWeight).toBe(100);
   });
 
-  it("does not increase if only some sets hit the top", () => {
+  it("increases when the best set hits the top, even if lighter/earlier sets didn't", () => {
+    // Ramp up to a top set that hits the top of the range -> add weight off that
+    // top set. The lighter warm-up-ish sets don't hold it back.
     const r = computeNextTarget({ ...base, lastSets: [
+      { weight: 90, reps: 12 },
+      { weight: 95, reps: 12 },
       { weight: 100, reps: 12 },
-      { weight: 100, reps: 12 },
-      { weight: 100, reps: 10 },
+    ]});
+    expect(r.action).toBe("increase");
+    expect(r.targetWeight).toBe(105); // 100 (top set) + 5
+  });
+
+  it("anchors a hold to the heaviest set, not the lightest", () => {
+    // Ascending loading, top set mid-range -> hold AT the top set's weight so the
+    // next suggestion starts there, not at the light opening set.
+    const r = computeNextTarget({ ...base, lastSets: [
+      { weight: 135, reps: 10 },
+      { weight: 185, reps: 9 },
+      { weight: 235, reps: 8 },
     ]});
     expect(r.action).toBe("hold");
+    expect(r.targetWeight).toBe(235);
   });
 
   it("backs off ~7.5% when the bottom of the range is missed", () => {
@@ -43,12 +58,12 @@ describe("double progression", () => {
     expect(r.targetWeight).toBe(roundToPlate(92.5));
   });
 
-  it("uses the lowest working-set weight as the base for the increase", () => {
+  it("uses the best set (by e1RM) as the base for the increase", () => {
     const r = computeNextTarget({ ...base, lastSets: [
       { weight: 105, reps: 12 },
       { weight: 100, reps: 12 },
     ]});
-    expect(r.targetWeight).toBe(105); // 100 + 5
+    expect(r.targetWeight).toBe(110); // 105 (best set) + 5
   });
 
   it("returns 'first' with no history", () => {

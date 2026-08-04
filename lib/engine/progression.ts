@@ -26,21 +26,19 @@ export interface ProgressionContext {
   increment: number;
 }
 
-/** The weight sustained across all working sets = the lowest working-set weight. */
-function workingWeight(sets: WeightReps[]): number {
-  return sets.reduce((min, s) => (s.weight < min ? s.weight : min), Infinity);
-}
-
 /** Round to a sane gym increment (nearest 2.5 lb by default). */
 export function roundToPlate(weight: number, step = 2.5): number {
   return Math.round(weight / step) * step;
 }
 
 /**
- * Double progression: when every working set hits the TOP of the rep range at a
- * given weight, next session adds weight and resets target reps to the bottom.
- * Otherwise hold the weight (beat last time). If the bottom of the range was
- * missed entirely, back off ~7.5% and rebuild.
+ * Double progression, anchored to the BEST set (highest estimated 1RM) from last
+ * time — not the lightest. This matches how the athlete actually loads: if you
+ * ramp 135 -> 185 -> 235, the 235 set is your real working level, so that's what
+ * the next target builds on. From that best set:
+ *   - hit the TOP of the rep range  -> add weight, reset reps to the bottom
+ *   - landed mid-range              -> hold that weight, beat the reps
+ *   - fell short of the bottom      -> too heavy, back off ~7.5% and rebuild
  */
 export function computeNextTarget(ctx: ProgressionContext): NextTarget {
   const { lastSets, repsLow, repsHigh, increment } = ctx;
@@ -50,11 +48,11 @@ export function computeNextTarget(ctx: ProgressionContext): NextTarget {
     return { action: "first", targetWeight: null, targetRepsLow: repsLow, targetRepsHigh: repsHigh };
   }
 
-  const w = workingWeight(sets);
-  const allHitTop = sets.every((s) => s.reps >= repsHigh);
-  const bestReps = Math.max(...sets.map((s) => s.reps));
+  // The strongest set last time is the anchor for the next target.
+  const best = bestSetByE1RM(sets)!;
+  const w = best.weight;
 
-  if (allHitTop) {
+  if (best.reps >= repsHigh) {
     return {
       action: "increase",
       targetWeight: roundToPlate(w + increment),
@@ -63,8 +61,8 @@ export function computeNextTarget(ctx: ProgressionContext): NextTarget {
     };
   }
 
-  // Missed the bottom of the range even on the best set -> back off.
-  if (bestReps < repsLow) {
+  // Even the best set missed the bottom of the range -> back off.
+  if (best.reps < repsLow) {
     return {
       action: "back_off",
       targetWeight: roundToPlate(w * 0.925),
@@ -73,7 +71,7 @@ export function computeNextTarget(ctx: ProgressionContext): NextTarget {
     };
   }
 
-  // Mid-range: hold weight, aim to add reps toward the top.
+  // Mid-range: hold the best set's weight, aim to add reps toward the top.
   return { action: "hold", targetWeight: w, targetRepsLow: repsLow, targetRepsHigh: repsHigh };
 }
 
