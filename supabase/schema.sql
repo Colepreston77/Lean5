@@ -69,10 +69,16 @@ create table if not exists set_logs (
   actual_reps      int,
   is_warmup        boolean not null default false,
   completed_at     timestamptz,
+  -- Which machine/variant this set was performed on. Different machines aren't
+  -- comparable, so progression anchors match on (exercise_id, variant). NULL =
+  -- unspecified (free weights, or not yet tagged).
+  variant          text,
   created_at       timestamptz not null default now()
 );
 create index if not exists set_logs_session_idx on set_logs(session_id);
 create index if not exists set_logs_slot_idx on set_logs(slot_id);
+-- Migration for existing installs (safe to re-run):
+alter table set_logs add column if not exists variant text;
 
 -- Migration (safe to re-run): a set is uniquely (session, slot, set_number).
 -- 1) De-dupe any legacy duplicate rows (from the pre-upsert save race), keeping

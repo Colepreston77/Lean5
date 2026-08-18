@@ -340,9 +340,13 @@ function isBetterSetLog(a: SetLogRow, b: SetLogRow): boolean {
 export async function getLastWorkingSets(
   mesocycleId: string,
   slotId: string,
-  exerciseId?: string
+  exerciseId?: string,
+  /** When set, anchor only to sets logged on the SAME machine/variant — different
+   *  machines aren't comparable, so their numbers must not pollute progression. */
+  variant?: string | null
 ): Promise<{ weight: number; reps: number; set_number: number }[]> {
   const sb = getSupabase();
+  const withVariant = (f: Record<string, string>) => (variant ? { ...f, variant } : f);
 
   // Completed sessions for a meso, ordered so the freshest working data wins.
   // `newestFirst` (by created_at) is right within the active block. For a PRIOR
@@ -382,11 +386,11 @@ export async function getLastWorkingSets(
   const tryChain = async (sessions: { id: string }[]) => {
     if (!sessions.length) return [];
     if (exerciseId) {
-      const exact = await fetchWith(sessions, { slot_id: slotId, exercise_id: exerciseId });
+      const exact = await fetchWith(sessions, withVariant({ slot_id: slotId, exercise_id: exerciseId }));
       if (exact.length) return exact;
-      return fetchWith(sessions, { exercise_id: exerciseId });
+      return fetchWith(sessions, withVariant({ exercise_id: exerciseId }));
     }
-    return fetchWith(sessions, { slot_id: slotId });
+    return fetchWith(sessions, withVariant({ slot_id: slotId }));
   };
 
   // 1) This block's own history (once the new block has logged sessions, it wins).
@@ -405,6 +409,39 @@ export async function getLastWorkingSets(
   return tryChain(await sessionsFor(prev.id, { excludeWeek: prev.week_count, byWeekDesc: true }));
 }
 
+/**
+ * Distinct machine/variant labels this athlete has logged for an exercise, most
+ * recent first — this is what populates the per-exercise machine dropdown. The
+ * list builds itself from real usage; there is no hand-authored catalog. Returns
+ * [] gracefully on installs where the `variant` column isn't migrated yet.
+ */
+export async function getExerciseVariants(exerciseId: string): Promise<string[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("set_logs")
+    .select("variant, created_at")
+    .eq("exercise_id", exerciseId)
+    .not("variant", "is", null)
+    .order("created_at", { ascending: false });
+  if (error) return []; // 42703 (column missing pre-migration) or otherwise — no options
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const r of data ?? []) {
+    const v = (r.variant ?? "").trim();
+    if (v && !seen.has(v)) {
+      seen.add(v);
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+/** The machine/variant most recently used for an exercise — the dropdown default. */
+export async function getLastExerciseVariant(exerciseId: string): Promise<string | null> {
+  const [latest] = await getExerciseVariants(exerciseId);
+  return latest ?? null;
+}
+
 /** Upsert a single set log (by session + slot + set_number). */
 export async function saveSetLog(row: {
   session_id: string;
@@ -418,6 +455,9 @@ export async function saveSetLog(row: {
   actual_reps: number | null;
   is_warmup: boolean;
   completed: boolean;
+  /** Which machine/variant this set was performed on (null = unspecified). Only
+   *  sent when set, so installs pre-`variant`-column keep saving unaffected. */
+  variant?: string | null;
 }): Promise<void> {
   const sb = getSupabase();
   const payload = {
@@ -432,6 +472,7 @@ export async function saveSetLog(row: {
     actual_reps: row.actual_reps,
     is_warmup: row.is_warmup,
     completed_at: row.completed ? new Date().toISOString() : null,
+    ...(row.variant ? { variant: row.variant } : {}),
   };
 
   // Atomic upsert keyed on the natural set identity. The prior select-then-
@@ -440,9 +481,18 @@ export async function saveSetLog(row: {
   // duplicate row (some captured mid-entry with actual_reps still null). The
   // unique index on (session_id, slot_id, set_number) — see schema.sql — makes
   // this a single write that can only ever touch one row.
-  const { error } = await sb
-    .from("set_logs")
-    .upsert(payload, { onConflict: "session_id,slot_id,set_number" });
+  let writePayload: Record<string, unknown> = payload;
+  const upsert = (p: Record<string, unknown>) =>
+    sb.from("set_logs").upsert(p, { onConflict: "session_id,slot_id,set_number" });
+  let { error } = await upsert(writePayload);
+  // Pre-migration resilience: the `variant` column may not exist yet (42703
+  // undefined_column). Drop it and retry so logging never breaks before the
+  // migration runs; the machine tag is simply not recorded until then.
+  if (error?.code === "42703" && "variant" in writePayload) {
+    const { variant: _omit, ...rest } = writePayload;
+    writePayload = rest;
+    ({ error } = await upsert(writePayload));
+  }
   if (!error) return;
 
   // Fallback for installs that haven't applied the unique-index migration yet
@@ -459,10 +509,10 @@ export async function saveSetLog(row: {
     .limit(1)
     .maybeSingle();
   if (existing) {
-    const { error: e } = await sb.from("set_logs").update(payload).eq("id", existing.id);
+    const { error: e } = await sb.from("set_logs").update(writePayload).eq("id", existing.id);
     if (e) throw e;
   } else {
-    const { error: e } = await sb.from("set_logs").insert(payload);
+    const { error: e } = await sb.from("set_logs").insert(writePayload);
     if (e) throw e;
   }
 }

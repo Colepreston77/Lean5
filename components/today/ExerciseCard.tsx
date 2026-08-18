@@ -10,6 +10,9 @@ export default function ExerciseCard({
   slot,
   sets,
   note,
+  variant,
+  variantOptions,
+  onVariantChange,
   onNoteChange,
   onSetChange,
   onToggleDone,
@@ -19,6 +22,9 @@ export default function ExerciseCard({
   slot: SlotView;
   sets: LocalSet[];
   note?: string;
+  variant?: string | null;
+  variantOptions?: string[];
+  onVariantChange?: (variant: string) => void;
   onNoteChange?: (text: string) => void;
   onSetChange: (setIndex: number, next: LocalSet) => void;
   onToggleDone: (setIndex: number) => void;
@@ -54,6 +60,9 @@ export default function ExerciseCard({
   }
   const repRange = slot.reps_label ?? `${slot.reps_low}-${slot.reps_high}`;
   const weightStep = slot.exercise.weight_increment >= 5 ? 5 : 2.5;
+  // The machine picker only matters where the number depends on the unit: machine,
+  // cable, and smith. Free weights are comparable across the gym.
+  const machineBased = ["machine", "cable", "smith"].includes(slot.exercise.equipment);
 
   if (slot.is_cardio) {
     return (
@@ -131,6 +140,13 @@ export default function ExerciseCard({
 
       {open && (
         <div className="border-t border-line px-2 pb-3 pt-2">
+          {machineBased && onVariantChange && (
+            <MachinePicker
+              variant={variant ?? null}
+              options={variantOptions ?? []}
+              onChange={onVariantChange}
+            />
+          )}
           {slot.ramp.length > 0 && (
             <div className="mb-2 rounded-xl bg-[var(--neutral-bg)] px-3 py-2">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">Ramp-up</div>
@@ -176,6 +192,76 @@ export default function ExerciseCard({
             {coach.error && <div className="mt-2 text-xs text-red-700">{coach.error}</div>}
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Per-exercise machine picker. Options are the machines the athlete has logged
+ * for this lift before (passed in), plus an inline "add new" — the list builds
+ * itself from usage, no hand-authored catalog. Switching machines re-anchors the
+ * "last time" reference so different machines' numbers stay separate.
+ */
+function MachinePicker({
+  variant,
+  options,
+  onChange,
+}: {
+  variant: string | null;
+  options: string[];
+  onChange: (variant: string) => void;
+}) {
+  const [adding, setAdding] = useState(options.length === 0 && !variant);
+  const [text, setText] = useState("");
+
+  function commit() {
+    const v = text.trim();
+    if (v) onChange(v);
+    setText("");
+    setAdding(false);
+  }
+
+  return (
+    <div className="mb-2 flex items-center gap-2 rounded-xl bg-[var(--neutral-bg)] px-3 py-2">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">Machine</span>
+      {adding ? (
+        <>
+          <input
+            autoFocus
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commit();
+              if (e.key === "Escape") setAdding(false);
+            }}
+            placeholder="e.g. corner one, by the window"
+            className="min-w-0 flex-1 rounded-lg border border-line bg-card px-2 py-1 text-sm outline-none focus:border-ink"
+          />
+          <button onClick={commit} className="rounded-lg bg-ink px-2.5 py-1 text-xs font-semibold text-white">
+            Save
+          </button>
+          {options.length > 0 && (
+            <button onClick={() => setAdding(false)} className="text-xs font-semibold text-ink-faint">
+              Cancel
+            </button>
+          )}
+        </>
+      ) : (
+        <select
+          value={variant ?? ""}
+          onChange={(e) => {
+            if (e.target.value === "__new__") setAdding(true);
+            else onChange(e.target.value);
+          }}
+          className="min-w-0 flex-1 rounded-lg border border-line bg-card px-2 py-1 text-sm outline-none focus:border-ink"
+        >
+          {!variant && <option value="" disabled>Which machine?</option>}
+          {options.map((o) => (
+            <option key={o} value={o}>{o}</option>
+          ))}
+          <option value="__new__">＋ New machine…</option>
+        </select>
       )}
     </div>
   );

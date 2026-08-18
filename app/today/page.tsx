@@ -10,6 +10,7 @@ import { isDeloadWeek } from "@/lib/engine/deload";
 import { swapCandidates, swapsLocked } from "@/lib/engine/swap";
 import { epley1RM } from "@/lib/engine/oneRepMax";
 import { assembleDay, type DayView } from "@/lib/app/today";
+import { computeNextTarget, getProgressionHint } from "@/lib/engine/progression";
 import { hasSupabaseConfig } from "@/lib/supabase/client";
 import * as repo from "@/lib/db/repo";
 import ExerciseCard from "@/components/today/ExerciseCard";
@@ -53,6 +54,10 @@ function TodayInner() {
   const [startedAt, setStartedAt] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [notesBySlot, setNotesBySlot] = useState<Record<string, string>>({});
+  // Chosen machine/variant per slot for this session, and the dropdown options
+  // (distinct machines previously logged for that exercise).
+  const [variantBySlot, setVariantBySlot] = useState<Record<string, string | null>>({});
+  const [variantOptsBySlot, setVariantOptsBySlot] = useState<Record<string, string[]>>({});
 
   const mesoRef = useRef<repo.MesocycleRow | null>(null);
   const sessionRef = useRef<repo.SessionRow | null>(null);
@@ -110,10 +115,20 @@ function TodayInner() {
 
       const { cut_mode } = await repo.getSettings();
 
-      const lastPairs = await Promise.all(
-        day.slots.map(async (s) => [s.slot_id, await repo.getLastWorkingSets(meso.id, s.slot_id, swaps[s.slot_id] ?? s.exercise_id)] as const)
+      // Per slot: which machines exist for this exercise, default to the most
+      // recently used one, and anchor "last time" to THAT machine's history.
+      const perSlot = await Promise.all(
+        day.slots.map(async (s) => {
+          const exId = swaps[s.slot_id] ?? s.exercise_id;
+          const options = await repo.getExerciseVariants(exId);
+          const variant = options[0] ?? null;
+          const last = await repo.getLastWorkingSets(meso.id, s.slot_id, exId, variant);
+          return { slot_id: s.slot_id, options, variant, last };
+        })
       );
-      const lastSetsBySlot = Object.fromEntries(lastPairs);
+      const lastSetsBySlot = Object.fromEntries(perSlot.map((p) => [p.slot_id, p.last]));
+      setVariantBySlot(Object.fromEntries(perSlot.map((p) => [p.slot_id, p.variant])));
+      setVariantOptsBySlot(Object.fromEntries(perSlot.map((p) => [p.slot_id, p.options])));
 
       const dayView = assembleDay({ day, week, weekCount: meso.week_count, isDeload, cutMode: cut_mode, swaps, lastSetsBySlot });
       setModel(dayView);
@@ -267,9 +282,50 @@ function TodayInner() {
       actual_reps: s.reps,
       is_warmup: false,
       completed: done,
+      variant: variantBySlot[slotId] ?? null,
     };
     clearTimeout(saveTimers.current[key]);
     saveTimers.current[key] = setTimeout(() => void flushKey(key), 500);
+  }
+
+  /**
+   * Switch the machine/variant for a slot mid-session. Re-anchors "last time"
+   * and the progression suggestion to that machine's own history (different
+   * machines aren't comparable), and re-prefills any not-yet-logged sets with
+   * the machine-correct target. New labels are remembered for next time.
+   */
+  async function changeVariant(slotId: string, exerciseId: string, variant: string) {
+    const meso = mesoRef.current;
+    const sv = model?.groups.flatMap((g) => g.slots).find((x) => x.slot_id === slotId);
+    if (!meso || !model || !sv) return;
+
+    setVariantBySlot((prev) => ({ ...prev, [slotId]: variant }));
+    setVariantOptsBySlot((prev) => {
+      const cur = prev[slotId] ?? [];
+      return cur.includes(variant) ? prev : { ...prev, [slotId]: [variant, ...cur] };
+    });
+
+    const last = await repo.getLastWorkingSets(meso.id, slotId, exerciseId, variant);
+    const ctx = { lastSets: last, repsLow: sv.reps_low, repsHigh: sv.reps_high, increment: sv.exercise.weight_increment };
+    const target = computeNextTarget(ctx);
+    const hint = getProgressionHint({ ...ctx, isDeload: model.isDeload, hasHistory: last.length > 0 });
+
+    setModel((m) =>
+      m
+        ? {
+            ...m,
+            groups: m.groups.map((g) => ({
+              ...g,
+              slots: g.slots.map((x) => (x.slot_id === slotId ? { ...x, lastSets: last, target, hint } : x)),
+            })),
+          }
+        : m
+    );
+    // Re-prefill undone sets to the machine-correct suggested weight.
+    setSetsBySlot((prev) => {
+      const arr = (prev[slotId] ?? []).map((s) => (s.done ? s : { ...s, weight: target.targetWeight }));
+      return { ...prev, [slotId]: arr };
+    });
   }
 
   function updateSet(slotId: string, exerciseId: string, i: number, next: LocalSet) {
@@ -434,6 +490,9 @@ function TodayInner() {
                 sets={setsBySlot[slot.slot_id] ?? []}
                 startExpanded={group.group === "A" && idx === 0}
                 note={notesBySlot[slot.slot_id] ?? ""}
+                variant={variantBySlot[slot.slot_id] ?? null}
+                variantOptions={variantOptsBySlot[slot.slot_id] ?? []}
+                onVariantChange={(v) => changeVariant(slot.slot_id, slot.exercise.id, v)}
                 onNoteChange={(text) => updateNote(slot.slot_id, text)}
                 onSetChange={(i, next) => updateSet(slot.slot_id, slot.exercise.id, i, next)}
                 onToggleDone={(i) => toggleDone(slot.slot_id, slot.exercise.id, i)}
