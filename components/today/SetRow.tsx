@@ -24,6 +24,16 @@ export default function SetRow({
   onChange: (next: LocalSet) => void;
   onToggleDone: () => void;
 }) {
+  // Gentle guardrail: flag a >10% load jump vs the same set last time — the free-
+  // typed actuals bypass the plan's weight-jump audit, so this catches a fat-
+  // finger or an over-eager bump. Only for positive loads (assisted/negative
+  // loads invert the math and would false-alarm).
+  const jumpPct =
+    local.weight != null && last?.weight != null && last.weight > 0
+      ? (local.weight - last.weight) / last.weight
+      : 0;
+  const bigJump = jumpPct > 0.1;
+
   return (
     <div className={`flex items-stretch gap-2 rounded-xl px-1 py-2 ${local.done ? "bg-[var(--green-bg)]/40" : ""}`}>
       <div className="flex w-5 shrink-0 items-center justify-center text-sm font-bold text-ink-soft">{setNumber}</div>
@@ -53,6 +63,11 @@ export default function SetRow({
         <div className="pl-1 text-[11px] text-ink-faint">
           {last ? `last: ${last.weight} × ${last.reps}` : "first time — find your weight"}
         </div>
+        {bigJump && last?.weight != null && (
+          <div className="pl-1 text-[11px] font-semibold text-[var(--yellow)]">
+            ↑ {Math.round(jumpPct * 100)}% over last ({last.weight}) — sure?
+          </div>
+        )}
       </div>
 
       <button

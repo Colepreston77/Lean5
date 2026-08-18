@@ -361,9 +361,12 @@ function TodayInner() {
     }
 
     // Duration from when the athlete tapped Start, not row creation. Fall back to
-    // created_at for sessions started before started_at existed.
+    // created_at for sessions started before started_at existed. Capped at 4h:
+    // if Finish is forgotten and tapped hours/days later, we'd otherwise log a
+    // garbage duration (some legacy rows read thousands of minutes).
+    const MAX_SESSION_SECONDS = 4 * 3600;
     const start = new Date(session.started_at ?? session.created_at ?? Date.now()).getTime();
-    const durationSeconds = Math.max(60, Math.round((Date.now() - start) / 1000));
+    const durationSeconds = Math.min(MAX_SESSION_SECONDS, Math.max(60, Math.round((Date.now() - start) / 1000)));
     await repo.completeSession(session.id, durationSeconds);
 
     const newFinished = await repo.getFinishedCount(meso.id);

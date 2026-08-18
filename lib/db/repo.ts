@@ -343,16 +343,23 @@ export async function getLastWorkingSets(
   exerciseId?: string
 ): Promise<{ weight: number; reps: number; set_number: number }[]> {
   const sb = getSupabase();
-  // sessions for this meso, newest first
-  const { data: sessions } = await sb
-    .from("sessions")
-    .select("id")
-    .eq("mesocycle_id", mesocycleId)
-    .eq("status", "completed")
-    .order("created_at", { ascending: false });
-  if (!sessions?.length) return [];
 
-  const fetchWith = async (filters: Record<string, string>) => {
+  // Completed sessions for a meso, ordered so the freshest working data wins.
+  // `newestFirst` (by created_at) is right within the active block. For a PRIOR
+  // block we order by week desc so the last real overload week anchors the new
+  // block — and we drop the deload week entirely (a new block should progress
+  // from your last hard week, not from a half-volume deload).
+  const sessionsFor = async (mesoId: string, opts?: { excludeWeek?: number; byWeekDesc?: boolean }) => {
+    let q = sb.from("sessions").select("id, week").eq("mesocycle_id", mesoId).eq("status", "completed");
+    if (opts?.excludeWeek != null) q = q.neq("week", opts.excludeWeek);
+    q = opts?.byWeekDesc
+      ? q.order("week", { ascending: false }).order("created_at", { ascending: false })
+      : q.order("created_at", { ascending: false });
+    const { data } = await q;
+    return data ?? [];
+  };
+
+  const fetchWith = async (sessions: { id: string }[], filters: Record<string, string>) => {
     for (const s of sessions) {
       let q = sb
         .from("set_logs")
@@ -371,16 +378,31 @@ export async function getLastWorkingSets(
     return [];
   };
 
-  if (exerciseId) {
-    // 1) This exact lift in this exact slot.
-    const exact = await fetchWith({ slot_id: slotId, exercise_id: exerciseId });
-    if (exact.length) return exact;
-    // 2) Same exercise on any slot (a repeat lift across days).
-    return fetchWith({ exercise_id: exerciseId });
-  }
+  // Try a session set with the exact-slot → same-exercise → any-slot fallback chain.
+  const tryChain = async (sessions: { id: string }[]) => {
+    if (!sessions.length) return [];
+    if (exerciseId) {
+      const exact = await fetchWith(sessions, { slot_id: slotId, exercise_id: exerciseId });
+      if (exact.length) return exact;
+      return fetchWith(sessions, { exercise_id: exerciseId });
+    }
+    return fetchWith(sessions, { slot_id: slotId });
+  };
 
-  // No exercise known: fall back to whatever this slot last held.
-  return fetchWith({ slot_id: slotId });
+  // 1) This block's own history (once the new block has logged sessions, it wins).
+  const withinBlock = await tryChain(await sessionsFor(mesocycleId));
+  if (withinBlock.length) return withinBlock;
+
+  // 2) Carryover: no history in this block yet (e.g. week 1 of a fresh block) —
+  // anchor suggestions on the PREVIOUS block's last real training week.
+  const { data: metas } = await sb
+    .from("mesocycles")
+    .select("id, week_count, created_at")
+    .order("created_at", { ascending: false });
+  const idx = (metas ?? []).findIndex((m) => m.id === mesocycleId);
+  const prev = idx >= 0 ? (metas ?? [])[idx + 1] : undefined;
+  if (!prev) return [];
+  return tryChain(await sessionsFor(prev.id, { excludeWeek: prev.week_count, byWeekDesc: true }));
 }
 
 /** Upsert a single set log (by session + slot + set_number). */
