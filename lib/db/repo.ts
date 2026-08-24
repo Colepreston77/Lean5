@@ -174,6 +174,35 @@ export async function skipSession(id: string): Promise<void> {
 }
 
 /**
+ * Restart a week: reopen every session in it (back to pending) and wipe that
+ * week's logged sets so it's a blank slate — WITHOUT advancing the block. The
+ * sequence cursor returns to Day 1 of this week. Prior weeks are untouched, so
+ * progression suggestions fall back to your last completed week as the reference.
+ * Use when a week went so poorly you'd rather run it again than carry it forward.
+ */
+export async function restartWeek(mesocycleId: string, week: number): Promise<void> {
+  const sb = getSupabase();
+  const { data: sessions, error: sErr } = await sb
+    .from("sessions")
+    .select("id")
+    .eq("mesocycle_id", mesocycleId)
+    .eq("week", week);
+  if (sErr) throw sErr;
+  const ids = (sessions ?? []).map((s) => s.id);
+  if (ids.length) {
+    const { error: delErr } = await sb.from("set_logs").delete().in("session_id", ids);
+    if (delErr) throw delErr;
+    const { error: updErr } = await sb
+      .from("sessions")
+      .update({ status: "pending", started_at: null, duration_seconds: null, notes: null })
+      .in("id", ids);
+    if (updErr) throw updErr;
+  }
+  const { error: mErr } = await sb.from("mesocycles").update({ current_week: week }).eq("id", mesocycleId);
+  if (mErr) throw mErr;
+}
+
+/**
  * Get the session for a (day, week), or create one. A COMPLETED session wins:
  * once a day is logged, revisiting it must show that logged data, not a fresh
  * empty session. Without this, navigating back to a finished day skipped the

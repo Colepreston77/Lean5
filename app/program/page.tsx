@@ -89,6 +89,27 @@ export default function ProgramPage() {
     }
   }
 
+  async function restartThisWeek() {
+    if (!mesoId) return;
+    const label = deloadNow ? "the deload week" : `week ${week}`;
+    if (
+      !window.confirm(
+        `Restart ${label}? This clears everything you logged this week and starts it over from Day 1. The block does not advance, and previous weeks (and their history) are untouched.`
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      await repo.restartWeek(mesoId, week);
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      console.error(e);
+      alert("Couldn't restart the week.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function exportCsv() {
     setBusy(true);
     try {
@@ -173,6 +194,26 @@ export default function ProgramPage() {
         </div>
         {audit && <PlanReview result={audit} />}
       </div>
+
+      {/* Restart week — for a week that went so poorly you'd rather rerun it */}
+      {mesoId && !complete && (
+        <div className="mt-2 flex items-center justify-between rounded-2xl bg-card p-4 shadow-sm">
+          <div className="min-w-0 pr-3">
+            <div className="font-bold">Restart this week</div>
+            <div className="text-xs text-ink-faint">
+              Wipes {deloadNow ? "the deload week" : `week ${week}`}&apos;s logs and starts it over from Day 1. The block
+              doesn&apos;t advance; earlier weeks stay put and remain your reference.
+            </div>
+          </div>
+          <button
+            onClick={restartThisWeek}
+            disabled={busy}
+            className="shrink-0 rounded-xl bg-[var(--yellow-bg)] px-4 py-2 text-sm font-semibold text-[var(--yellow)] disabled:opacity-50"
+          >
+            Restart
+          </button>
+        </div>
+      )}
 
       {/* Structure */}
       <h2 className="mb-2 mt-6 text-sm font-bold uppercase tracking-wider text-ink-faint">Structure</h2>
