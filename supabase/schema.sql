@@ -110,6 +110,30 @@ create table if not exists exercise_notes (
 );
 create unique index if not exists exercise_notes_unique on exercise_notes(session_id, slot_id);
 
+-- Machines/locations per exercise --------------------------------------------
+-- Durable list of machine/location labels the athlete uses for an exercise, so
+-- the picker persists independent of set logs (which can be deleted on a week
+-- reset). Additive, safe to re-run.
+create table if not exists exercise_machines (
+  id           uuid primary key default gen_random_uuid(),
+  exercise_id  text not null,
+  label        text not null,
+  created_at   timestamptz not null default now()
+);
+create unique index if not exists exercise_machines_unique on exercise_machines(exercise_id, label);
+
+-- Per-exercise dated note log -------------------------------------------------
+-- Append-only notes (each Save is one dated row), viewable as history per
+-- exercise. Replaces the old single-note-per-(session,slot) model.
+create table if not exists exercise_note_entries (
+  id           uuid primary key default gen_random_uuid(),
+  exercise_id  text not null,
+  note         text not null,
+  session_id   uuid references sessions(id) on delete set null,
+  created_at   timestamptz not null default now()
+);
+create index if not exists exercise_note_entries_ex_idx on exercise_note_entries(exercise_id);
+
 -- Swaps -----------------------------------------------------------------------
 create table if not exists swaps (
   id               uuid primary key default gen_random_uuid(),
@@ -132,11 +156,13 @@ alter table sessions       enable row level security;
 alter table set_logs       enable row level security;
 alter table swaps          enable row level security;
 alter table exercise_notes enable row level security;
+alter table exercise_machines     enable row level security;
+alter table exercise_note_entries enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['settings','mesocycles','sessions','set_logs','swaps','exercise_notes'] loop
+  foreach t in array array['settings','mesocycles','sessions','set_logs','swaps','exercise_notes','exercise_machines','exercise_note_entries'] loop
     execute format('drop policy if exists anon_all on %I;', t);
     execute format('create policy anon_all on %I for all to anon, authenticated using (true) with check (true);', t);
   end loop;

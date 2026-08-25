@@ -276,45 +276,40 @@ export async function startSession(id: string): Promise<SessionRow> {
 // --- Per-exercise notes -------------------------------------------------------
 // A small free-text jot per (session, slot) — e.g. "knee felt off on set 2".
 
-export async function getExerciseNotes(sessionId: string): Promise<Record<string, string>> {
-  const sb = getSupabase();
-  const { data, error } = await sb
-    .from("exercise_notes")
-    .select("slot_id, note")
-    .eq("session_id", sessionId);
-  if (error) {
-    if (error.code === "42P01") return {}; // table not migrated yet — no notes
-    throw error;
-  }
-  const out: Record<string, string> = {};
-  for (const r of data ?? []) out[r.slot_id] = r.note ?? "";
-  return out;
+export interface NoteEntry {
+  id: string;
+  note: string;
+  created_at: string;
 }
 
-export async function saveExerciseNote(row: {
-  session_id: string;
-  slot_id: string;
-  note: string;
-}): Promise<void> {
+/** Dated note history for an exercise (newest first) — the "view notes" list. */
+export async function getExerciseNoteEntries(exerciseId: string): Promise<NoteEntry[]> {
   const sb = getSupabase();
-  const payload = { ...row, updated_at: new Date().toISOString() };
-  const { error } = await sb.from("exercise_notes").upsert(payload, { onConflict: "session_id,slot_id" });
-  if (!error) return;
-  // Fallback if the unique index isn't present yet (42P10) — select then write.
-  if (error.code !== "42P10") throw error;
-  const { data: existing } = await sb
-    .from("exercise_notes")
-    .select("id")
-    .eq("session_id", row.session_id)
-    .eq("slot_id", row.slot_id)
-    .maybeSingle();
-  if (existing) {
-    const { error: e } = await sb.from("exercise_notes").update(payload).eq("id", existing.id);
-    if (e) throw e;
-  } else {
-    const { error: e } = await sb.from("exercise_notes").insert(payload);
-    if (e) throw e;
-  }
+  const { data, error } = await sb
+    .from("exercise_note_entries")
+    .select("id, note, created_at")
+    .eq("exercise_id", exerciseId)
+    .order("created_at", { ascending: false });
+  if (error) return []; // table not migrated yet — no notes
+  return (data ?? []).map((r) => ({ id: r.id, note: r.note ?? "", created_at: r.created_at }));
+}
+
+/** Append a dated note for an exercise. Returns the saved entry (for optimistic UI). */
+export async function addExerciseNoteEntry(row: {
+  exercise_id: string;
+  note: string;
+  session_id?: string | null;
+}): Promise<NoteEntry | null> {
+  const note = row.note.trim();
+  if (!note) return null;
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("exercise_note_entries")
+    .insert({ exercise_id: row.exercise_id, note, session_id: row.session_id ?? null })
+    .select("id, note, created_at")
+    .single();
+  if (error) throw error;
+  return { id: data.id, note: data.note ?? "", created_at: data.created_at };
 }
 
 export async function completeSession(id: string, durationSeconds: number, notes?: string): Promise<void> {
@@ -446,23 +441,45 @@ export async function getLastWorkingSets(
  */
 export async function getExerciseVariants(exerciseId: string): Promise<string[]> {
   const sb = getSupabase();
-  const { data, error } = await sb
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const add = (raw: unknown) => {
+    const v = typeof raw === "string" ? raw.trim() : "";
+    if (v && !seen.has(v)) {
+      seen.add(v);
+      out.push(v);
+    }
+  };
+  // Durable machine list — survives week resets / set-log deletes.
+  const { data: machines } = await sb
+    .from("exercise_machines")
+    .select("label, created_at")
+    .eq("exercise_id", exerciseId)
+    .order("created_at", { ascending: false });
+  for (const m of machines ?? []) add(m.label);
+  // Fold in any labels still sitting on logged sets (older data / belt-and-suspenders).
+  const { data: logs } = await sb
     .from("set_logs")
     .select("variant, created_at")
     .eq("exercise_id", exerciseId)
     .not("variant", "is", null)
     .order("created_at", { ascending: false });
-  if (error) return []; // 42703 (column missing pre-migration) or otherwise — no options
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const r of data ?? []) {
-    const v = (r.variant ?? "").trim();
-    if (v && !seen.has(v)) {
-      seen.add(v);
-      out.push(v);
-    }
-  }
+  for (const l of logs ?? []) add(l.variant);
   return out;
+}
+
+/** Remember a machine/location for an exercise so it persists in the dropdown
+ *  independent of whether any set was logged (or later deleted). */
+export async function addExerciseMachine(exerciseId: string, label: string): Promise<void> {
+  const l = label.trim();
+  if (!l) return;
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("exercise_machines")
+    .upsert({ exercise_id: exerciseId, label: l }, { onConflict: "exercise_id,label", ignoreDuplicates: true });
+  // Swallow pre-migration states (42P01 table missing / 42P10 no unique index) so
+  // picking a machine never errors before the table exists.
+  if (error && error.code !== "42P01" && error.code !== "42P10") throw error;
 }
 
 /** The machine/variant most recently used for an exercise — the dropdown default. */

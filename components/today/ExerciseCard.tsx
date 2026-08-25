@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { SlotView } from "@/lib/app/today";
+import type { NoteEntry } from "@/lib/db/repo";
 import ProgressionChip from "./ProgressionChip";
 import SetRow, { type LocalSet } from "./SetRow";
 import { rirGuide } from "@/lib/app/rir";
@@ -9,11 +10,11 @@ import { rirGuide } from "@/lib/app/rir";
 export default function ExerciseCard({
   slot,
   sets,
-  note,
+  noteEntries,
+  onSaveNote,
   variant,
   variantOptions,
   onVariantChange,
-  onNoteChange,
   onSetChange,
   onToggleDone,
   onSwap,
@@ -21,11 +22,11 @@ export default function ExerciseCard({
 }: {
   slot: SlotView;
   sets: LocalSet[];
-  note?: string;
+  noteEntries?: NoteEntry[];
+  onSaveNote?: (text: string) => void;
   variant?: string | null;
   variantOptions?: string[];
   onVariantChange?: (variant: string) => void;
-  onNoteChange?: (text: string) => void;
   onSetChange: (setIndex: number, next: LocalSet) => void;
   onToggleDone: (setIndex: number) => void;
   onSwap: () => void;
@@ -168,15 +169,7 @@ export default function ExerciseCard({
               onToggleDone={() => onToggleDone(i)}
             />
           ))}
-          {onNoteChange && (
-            <textarea
-              value={note ?? ""}
-              onChange={(e) => onNoteChange(e.target.value)}
-              rows={1}
-              placeholder="Note (e.g. felt easy, knee tender on set 2)…"
-              className="mt-2 w-full resize-none rounded-xl border border-line bg-card px-3 py-2 text-sm outline-none focus:border-ink"
-            />
-          )}
+          {onSaveNote && <NotesSection entries={noteEntries ?? []} onSave={onSaveNote} />}
 
           <div className="mt-2">
             <button
@@ -192,6 +185,69 @@ export default function ExerciseCard({
             {coach.error && <div className="mt-2 text-xs text-red-700">{coach.error}</div>}
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Per-exercise notes: type a note, hit Save, and it's stored with today's date.
+ * Past notes are hidden behind a "View notes (N)" toggle so the card stays clean.
+ */
+function NotesSection({ entries, onSave }: { entries: NoteEntry[]; onSave: (text: string) => void }) {
+  const [text, setText] = useState("");
+  const [showLog, setShowLog] = useState(false);
+
+  function save() {
+    const v = text.trim();
+    if (!v) return;
+    onSave(v);
+    setText("");
+  }
+
+  const fmt = (iso: string) =>
+    new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+
+  return (
+    <div className="mt-2">
+      <div className="flex items-center gap-2">
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save();
+          }}
+          placeholder="Add a note (e.g. felt easy, knee tender on set 2)…"
+          className="min-w-0 flex-1 rounded-xl border border-line bg-card px-3 py-2 text-sm outline-none focus:border-ink"
+        />
+        <button
+          onClick={save}
+          disabled={!text.trim()}
+          className="shrink-0 rounded-xl bg-ink px-3 py-2 text-sm font-semibold text-white disabled:opacity-40"
+        >
+          Save
+        </button>
+      </div>
+
+      {entries.length > 0 && (
+        <>
+          <button
+            onClick={() => setShowLog((s) => !s)}
+            className="mt-1.5 text-xs font-semibold text-ink-faint"
+          >
+            {showLog ? "Hide notes" : `View notes (${entries.length})`}
+          </button>
+          {showLog && (
+            <ul className="mt-1 flex flex-col gap-1.5">
+              {entries.map((e) => (
+                <li key={e.id} className="rounded-xl bg-[var(--neutral-bg)] px-3 py-2">
+                  <div className="text-[11px] font-semibold text-ink-faint">{fmt(e.created_at)}</div>
+                  <div className="text-sm text-ink-soft">{e.note}</div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </div>
   );

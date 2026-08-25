@@ -53,7 +53,8 @@ function TodayInner() {
   const [nav, setNav] = useState<Nav | null>(null);
   const [startedAt, setStartedAt] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const [notesBySlot, setNotesBySlot] = useState<Record<string, string>>({});
+  // Dated note history per exercise (newest first) — shown in each card's notes log.
+  const [noteEntriesByEx, setNoteEntriesByEx] = useState<Record<string, repo.NoteEntry[]>>({});
   // Chosen machine/variant per slot for this session, and the dropdown options
   // (distinct machines previously logged for that exercise).
   const [variantBySlot, setVariantBySlot] = useState<Record<string, string | null>>({});
@@ -66,9 +67,6 @@ function TodayInner() {
   // stash here so they can be flushed before a reload/swap/finish or page hide —
   // otherwise a pending edit is lost when load() re-seeds local state.
   const pending = useRef<Record<string, Parameters<typeof repo.saveSetLog>[0]>>({});
-  // Same stash/flush pattern for per-exercise notes, keyed by slot_id.
-  const notePending = useRef<Record<string, Parameters<typeof repo.saveExerciseNote>[0]>>({});
-  const noteTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   function goTo(week: number, day: number) {
     router.replace(`/today?week=${week}&day=${day}`);
@@ -137,7 +135,9 @@ function TodayInner() {
       sessionRef.current = session;
       setNowMs(Date.now());
       setStartedAt(session.started_at ?? null);
-      setNotesBySlot(await repo.getExerciseNotes(session.id));
+      const exIds = [...new Set(day.slots.map((s) => swaps[s.slot_id] ?? s.exercise_id))];
+      const entryPairs = await Promise.all(exIds.map(async (id) => [id, await repo.getExerciseNoteEntries(id)] as const));
+      setNoteEntriesByEx(Object.fromEntries(entryPairs));
       const existing = await repo.getSetLogsForSession(session.id);
 
       // Seed local set state: target weight prefilled, reps blank unless logged.
@@ -189,11 +189,6 @@ function TodayInner() {
         delete pending.current[key];
         repo.saveSetLog(p).catch(() => {});
       }
-      for (const key of Object.keys(notePending.current)) {
-        const p = notePending.current[key];
-        delete notePending.current[key];
-        repo.saveExerciseNote(p).catch(() => {});
-      }
     };
     window.addEventListener("pagehide", handler);
     return () => window.removeEventListener("pagehide", handler);
@@ -237,32 +232,26 @@ function TodayInner() {
     }
   }, []);
 
-  const flushNote = useCallback(async (slotId: string) => {
-    clearTimeout(noteTimers.current[slotId]);
-    const payload = notePending.current[slotId];
-    if (!payload) return;
-    delete notePending.current[slotId];
+  const flushSaves = useCallback(async () => {
+    await Promise.all(Object.keys(pending.current).map((k) => flushKey(k)));
+  }, [flushKey]);
+
+  /** Append a dated note for an exercise and prepend it to the card's log. */
+  async function saveNote(exerciseId: string, text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
     try {
-      await repo.saveExerciseNote(payload);
+      const entry = await repo.addExerciseNoteEntry({
+        exercise_id: exerciseId,
+        note: trimmed,
+        session_id: sessionRef.current?.id ?? null,
+      });
+      if (entry) {
+        setNoteEntriesByEx((prev) => ({ ...prev, [exerciseId]: [entry, ...(prev[exerciseId] ?? [])] }));
+      }
     } catch (e) {
       console.error("note save failed", e);
     }
-  }, []);
-
-  const flushSaves = useCallback(async () => {
-    await Promise.all([
-      ...Object.keys(pending.current).map((k) => flushKey(k)),
-      ...Object.keys(notePending.current).map((k) => flushNote(k)),
-    ]);
-  }, [flushKey, flushNote]);
-
-  function updateNote(slotId: string, note: string) {
-    setNotesBySlot((prev) => ({ ...prev, [slotId]: note }));
-    const session = sessionRef.current;
-    if (!session) return;
-    notePending.current[slotId] = { session_id: session.id, slot_id: slotId, note };
-    clearTimeout(noteTimers.current[slotId]);
-    noteTimers.current[slotId] = setTimeout(() => void flushNote(slotId), 600);
   }
 
   function persist(slotId: string, exerciseId: string, i: number, s: LocalSet, done: boolean) {
@@ -304,6 +293,9 @@ function TodayInner() {
       const cur = prev[slotId] ?? [];
       return cur.includes(variant) ? prev : { ...prev, [slotId]: [variant, ...cur] };
     });
+    // Persist the machine to its durable list immediately — independent of whether
+    // a set gets logged, so it survives week resets / log deletes.
+    void repo.addExerciseMachine(exerciseId, variant);
 
     const last = await repo.getLastWorkingSets(meso.id, slotId, exerciseId, variant);
     const ctx = { lastSets: last, repsLow: sv.reps_low, repsHigh: sv.reps_high, increment: sv.exercise.weight_increment };
@@ -489,11 +481,11 @@ function TodayInner() {
                 slot={slot}
                 sets={setsBySlot[slot.slot_id] ?? []}
                 startExpanded={group.group === "A" && idx === 0}
-                note={notesBySlot[slot.slot_id] ?? ""}
+                noteEntries={noteEntriesByEx[slot.exercise.id] ?? []}
+                onSaveNote={(text) => saveNote(slot.exercise.id, text)}
                 variant={variantBySlot[slot.slot_id] ?? null}
                 variantOptions={variantOptsBySlot[slot.slot_id] ?? []}
                 onVariantChange={(v) => changeVariant(slot.slot_id, slot.exercise.id, v)}
-                onNoteChange={(text) => updateNote(slot.slot_id, text)}
                 onSetChange={(i, next) => updateSet(slot.slot_id, slot.exercise.id, i, next)}
                 onToggleDone={(i) => toggleDone(slot.slot_id, slot.exercise.id, i)}
                 onSwap={() => setSwapSlot(slot.slot_id)}
