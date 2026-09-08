@@ -174,30 +174,28 @@ export async function skipSession(id: string): Promise<void> {
 }
 
 /**
- * Restart a week: reopen every session in it (back to pending) and wipe that
- * week's logged sets so it's a blank slate — WITHOUT advancing the block. The
- * sequence cursor returns to Day 1 of this week. Prior weeks are untouched, so
- * progression suggestions fall back to your last completed week as the reference.
- * Use when a week went so poorly you'd rather run it again than carry it forward.
+ * Restart a week WITHOUT advancing the block: the sequence cursor returns to
+ * Day 1 of this week and every day shows blank/not-done again, ready to re-run.
+ *
+ * Crucially we do NOT delete the week's logged sets — we mark its sessions
+ * `superseded`, which retains their set_logs. Superseded sessions no longer count
+ * as done (getCompletedCount, the calendar, and getOrCreateSession all ignore
+ * them, so each day spins up a fresh blank session), but their weights stay
+ * visible to getLastWorkingSets. So when you re-run, say, Monday, the suggestion
+ * pre-fills the weight you actually used pre-restart instead of falling back to
+ * last week. Machines already survive via the exercise_machines table. Once you
+ * re-log a day, its new (newer created_at) completed session out-ranks the
+ * superseded one as the reference. History and CSV export exclude superseded so
+ * the discarded attempt isn't double-counted.
  */
 export async function restartWeek(mesocycleId: string, week: number): Promise<void> {
   const sb = getSupabase();
-  const { data: sessions, error: sErr } = await sb
+  const { error: updErr } = await sb
     .from("sessions")
-    .select("id")
+    .update({ status: "superseded" })
     .eq("mesocycle_id", mesocycleId)
     .eq("week", week);
-  if (sErr) throw sErr;
-  const ids = (sessions ?? []).map((s) => s.id);
-  if (ids.length) {
-    const { error: delErr } = await sb.from("set_logs").delete().in("session_id", ids);
-    if (delErr) throw delErr;
-    const { error: updErr } = await sb
-      .from("sessions")
-      .update({ status: "pending", started_at: null, duration_seconds: null, notes: null })
-      .in("id", ids);
-    if (updErr) throw updErr;
-  }
+  if (updErr) throw updErr;
   const { error: mErr } = await sb.from("mesocycles").update({ current_week: week }).eq("id", mesocycleId);
   if (mErr) throw mErr;
 }
@@ -378,7 +376,9 @@ export async function getLastWorkingSets(
   // block — and we drop the deload week entirely (a new block should progress
   // from your last hard week, not from a half-volume deload).
   const sessionsFor = async (mesoId: string, opts?: { excludeWeek?: number; byWeekDesc?: boolean }) => {
-    let q = sb.from("sessions").select("id, week").eq("mesocycle_id", mesoId).eq("status", "completed");
+    // `superseded` = a restarted week's prior attempt; keep it as a weight
+    // reference so re-running the week pre-fills what you actually did.
+    let q = sb.from("sessions").select("id, week").eq("mesocycle_id", mesoId).in("status", ["completed", "superseded"]);
     if (opts?.excludeWeek != null) q = q.neq("week", opts.excludeWeek);
     q = opts?.byWeekDesc
       ? q.order("week", { ascending: false }).order("created_at", { ascending: false })
@@ -668,8 +668,9 @@ export async function getExportRows(): Promise<ExportRow[]> {
   const { data, error } = await sb
     .from("set_logs")
     .select(
-      "slot_id, exercise_id, set_number, target_reps_low, target_reps_high, target_weight, actual_weight, actual_reps, sessions!inner(program_day_order, week, date, created_at)"
+      "slot_id, exercise_id, set_number, target_reps_low, target_reps_high, target_weight, actual_weight, actual_reps, sessions!inner(program_day_order, week, date, created_at, status)"
     )
+    .neq("sessions.status", "superseded") // drop discarded (restarted) attempts
     .not("actual_reps", "is", null)
     .order("created_at", { ascending: true });
   if (error) throw error;

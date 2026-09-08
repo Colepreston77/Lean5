@@ -94,7 +94,7 @@ export default function ProgramPage() {
     const label = deloadNow ? "the deload week" : `week ${week}`;
     if (
       !window.confirm(
-        `Restart ${label}? This clears everything you logged this week and starts it over from Day 1. The block does not advance, and previous weeks (and their history) are untouched.`
+        `Restart ${label}? Every day goes back to not-done and you re-run the week from Day 1 — the block doesn't advance. The weights and machines you already used this week are kept as your starting suggestions, and previous weeks stay untouched.`
       )
     )
       return;
@@ -201,8 +201,8 @@ export default function ProgramPage() {
           <div className="min-w-0 pr-3">
             <div className="font-bold">Restart this week</div>
             <div className="text-xs text-ink-faint">
-              Wipes {deloadNow ? "the deload week" : `week ${week}`}&apos;s logs and starts it over from Day 1. The block
-              doesn&apos;t advance; earlier weeks stay put and remain your reference.
+              Re-runs {deloadNow ? "the deload week" : `week ${week}`} from Day 1 without advancing the block. Your days
+              reset to not-done, but the weights and machines you already logged this week stay as starting suggestions.
             </div>
           </div>
           <button

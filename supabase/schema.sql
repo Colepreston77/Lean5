@@ -43,7 +43,7 @@ create table if not exists sessions (
   program_day_order int not null,
   week             int not null,
   date             date,
-  status           text not null default 'pending', -- pending | in_progress | completed | skipped
+  status           text not null default 'pending', -- pending | in_progress | completed | skipped | superseded (a restarted week's discarded prior attempt; kept as a weight reference)
   -- When the athlete actually tapped "Start" (the timer origin). NULL until then;
   -- duration is measured from here, not from row creation.
   started_at       timestamptz,
