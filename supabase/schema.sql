@@ -35,6 +35,10 @@ create table if not exists mesocycles (
 -- Migration for existing installs (safe to re-run):
 alter table mesocycles add column if not exists program_json jsonb;
 alter table mesocycles add column if not exists goal text;
+-- kind: 'standard' (a normal training block) | 'detour' (an isolated side block,
+-- e.g. the 2-week Wedding Peak). Detour blocks are SKIPPED by progression
+-- carryover so the next real block anchors to the last real block, not the detour.
+alter table mesocycles add column if not exists kind text not null default 'standard';
 
 -- Sessions --------------------------------------------------------------------
 create table if not exists sessions (

@@ -16,6 +16,9 @@ export interface MesocycleRow {
   status: string;
   program_json: Program | null;
   goal: string | null;
+  /** 'standard' = normal block; 'detour' = isolated side block (e.g. Wedding Peak)
+   *  that progression carryover skips. May be undefined pre-migration. */
+  kind?: string;
 }
 
 export interface SessionRow {
@@ -75,21 +78,27 @@ export async function createMesocycle(
   programName: string,
   weekCount = 4,
   programJson: Program | null = null,
-  goal: string | null = null
+  goal: string | null = null,
+  kind: "standard" | "detour" = "standard"
 ): Promise<MesocycleRow> {
   const sb = getSupabase();
-  const { data, error } = await sb
-    .from("mesocycles")
-    .insert({
-      program_name: programName,
-      week_count: weekCount,
-      current_week: 1,
-      status: "active",
-      program_json: programJson,
-      goal,
-    })
-    .select("*")
-    .single();
+  const base = {
+    program_name: programName,
+    week_count: weekCount,
+    current_week: 1,
+    status: "active",
+    program_json: programJson,
+    goal,
+  };
+  const insert = (payload: Record<string, unknown>) =>
+    sb.from("mesocycles").insert(payload).select("*").single();
+  let { data, error } = await insert({ ...base, kind });
+  // Pre-migration resilience: the `kind` column may not exist yet (42703
+  // undefined_column). Retry without it so a block can still be created — the
+  // detour just won't be tagged (run the schema migration to enable isolation).
+  if (error?.code === "42703") {
+    ({ data, error } = await insert(base));
+  }
   if (error) throw error;
   return data;
 }
@@ -112,6 +121,21 @@ export async function startNextMesocycle(program: Program, goal: string | null, 
   const current = await getActiveMesocycle();
   if (current) await completeMesocycle(current.id);
   return createMesocycle(program.name, weekCount, program, goal);
+}
+
+/**
+ * Start an ISOLATED detour block (e.g. the 2-week Wedding Peak). Like starting a
+ * normal block, it completes the current one and activates the new one — but it's
+ * tagged kind = "detour" so progression carryover (getLastWorkingSets) skips it.
+ * The result: the detour's own week 1 still anchors to your last real block, but
+ * whatever real block you start AFTER the detour anchors back to that same real
+ * block — as if the detour never happened. Fully reversible: it's just another
+ * mesocycle, and your prior blocks/logs are untouched.
+ */
+export async function startDetourBlock(program: Program, goal: string | null, weekCount = 2): Promise<MesocycleRow> {
+  const current = await getActiveMesocycle();
+  if (current) await completeMesocycle(current.id);
+  return createMesocycle(program.name, weekCount, program, goal, "detour");
 }
 
 export async function setMesocycleWeek(id: string, week: number): Promise<void> {
@@ -425,10 +449,15 @@ export async function getLastWorkingSets(
   // anchor suggestions on the PREVIOUS block's last real training week.
   const { data: metas } = await sb
     .from("mesocycles")
-    .select("id, week_count, created_at")
+    .select("id, week_count, created_at, kind")
     .order("created_at", { ascending: false });
-  const idx = (metas ?? []).findIndex((m) => m.id === mesocycleId);
-  const prev = idx >= 0 ? (metas ?? [])[idx + 1] : undefined;
+  // Skip DETOUR blocks (e.g. the Wedding Peak) when finding the "previous" block:
+  // a detour's lighter/high-rep loads must never become the anchor for a real
+  // block. We keep the CURRENT meso in the list (even if it's itself a detour, so
+  // the detour's own week 1 can still anchor to the last real block behind it).
+  const chain = (metas ?? []).filter((m) => m.id === mesocycleId || m.kind !== "detour");
+  const idx = chain.findIndex((m) => m.id === mesocycleId);
+  const prev = idx >= 0 ? chain[idx + 1] : undefined;
   if (!prev) return [];
   return tryChain(await sessionsFor(prev.id, { excludeWeek: prev.week_count, byWeekDesc: true }));
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { LEAN5_PROGRAM } from "@/lib/seed/program";
+import { WEDDING_PEAK_PROGRAM, WEDDING_PEAK_WEEKS } from "@/lib/seed/peak";
 import { getExercise } from "@/lib/seed/exercises";
 import { isDeloadWeek, weeklySlotSets, DELOAD_RIR } from "@/lib/engine/deload";
 import { auditWeek, type WeekPlan, type AuditDay, type AuditSlot, type AuditResult } from "@/lib/engine/audit";
@@ -86,6 +87,27 @@ export default function ProgramPage() {
       await repo.setCutMode(next);
     } catch (e) {
       console.error(e);
+    }
+  }
+
+  const onPeak = program.name === WEDDING_PEAK_PROGRAM.name;
+
+  async function startWeddingPeak() {
+    if (
+      !window.confirm(
+        `Start the 2-week Wedding Peak?\n\nThis pauses your current block (it's marked complete and stays untouched) and runs a separate, isolated 2-week aesthetic block: 4 upper/pump days + 1 leg day. Week 1 is full volume; week 2 auto-tapers (half sets, same weights) so you peak for the day.\n\nIt won't affect your normal progression — when you're back, start a fresh block and it picks up from your real training, not the peak.`
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      await repo.startDetourBlock(WEDDING_PEAK_PROGRAM, "2-week pre-wedding aesthetic peak", WEDDING_PEAK_WEEKS);
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      console.error(e);
+      alert("Couldn't start the Wedding Peak block.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -179,6 +201,38 @@ export default function ProgramPage() {
             />
           </div>
         </div>
+      )}
+
+      {/* Wedding Peak — isolated 2-week aesthetic detour */}
+      {mesoId && (
+        onPeak ? (
+          <div className="mt-3 rounded-2xl bg-[var(--blue-bg)] p-4 shadow-sm">
+            <div className="font-bold text-[var(--blue)]">💍 Wedding Peak active</div>
+            <div className="mt-0.5 text-xs text-ink-soft">
+              You&apos;re in the isolated 2-week peak. Week 1 is full volume; week 2 auto-tapers (shows as
+              “deload” — that&apos;s the taper). This block won&apos;t touch your normal progression. When you&apos;re back,
+              use “Review block &amp; generate next” above to start a fresh block — it anchors to your last real
+              training, not the peak. See WEDDING-PEAK.md for the nutrition/water plan.
+            </div>
+          </div>
+        ) : (
+          <div className="mt-3 flex items-center justify-between rounded-2xl bg-card p-4 shadow-sm">
+            <div className="min-w-0 pr-3">
+              <div className="font-bold">Start 2-week Wedding Peak</div>
+              <div className="text-xs text-ink-faint">
+                An isolated aesthetic block — 4 upper/pump days + 1 leg day, then a taper week. Pauses your
+                current block without affecting it; skips your normal deload. Reversible.
+              </div>
+            </div>
+            <button
+              onClick={startWeddingPeak}
+              disabled={busy}
+              className="shrink-0 rounded-xl bg-[var(--blue)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              Start
+            </button>
+          </div>
+        )
       )}
 
       {/* Audit gate */}
